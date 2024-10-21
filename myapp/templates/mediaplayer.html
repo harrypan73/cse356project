@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Media Player</title>
+    <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
+    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/videojs-dash@2.11.0/dist/videojs-dash.min.js"></script>
+    <style>
+        #playPauseBtn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #fff;
+            cursor: pointer;
+            text-align: center;
+            border-radius: 4px;
+        }
+        #playPauseBtn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h2>Media Player</h2>
+    <video id="videoPlayer" class="video-js vjs-default-skin" controls preload="auto" width="640" height="360">
+        <source src="/media/output.mpd" type="application/dash+xml">
+        Your browser does not support the video tag.
+    </video>
+    <div id="playPauseBtn">Play/Pause</div>
+    <input type="range" id="seekBar" value="0" min="0" max="100" step="1">
+    <p><a href="#" id="logoutLink">Logout</a></p>
+    <script>
+        var player = videojs('videoPlayer', {
+            techOrder: ['html5', 'dash']
+        });
+
+        player.ready(function() {
+            player.src({src: "/media/output.mpd", type: "application/dash+xml"});
+        });
+
+        const playPauseBtn = document.getElementById('playPauseBtn');
+
+        playPauseBtn.addEventListener('click', function () {
+            if (player.paused()) {
+                player.play();
+                playPauseBtn.textContent = 'Pause';
+            } else {
+                player.pause();
+                playPauseBtn.textContent = 'Play';
+            }
+        });
+    </script>
+    <script>
+        document.getElementById('logoutLink').onclick = async (e) => {
+            e.preventDefault();
+            const response = await fetch('/logout', {
+                method: 'POST'
+            });
+            const result = await response.json();
+            alert(result.message);
+            window.location.href = '/login_page';
+        };
+    </script>
+</body>
+</html>
