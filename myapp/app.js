@@ -5,6 +5,8 @@ const MongoStore = require('connect-mongo');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const path = require('path');
+const fs = require('fs');
+const ffmpeg = require('fluent-ffmpeg');
 
 const PORT = 5000;
 
@@ -72,18 +74,19 @@ function isAuthenticated(req, res, next) {
   }
   
 
-  app.get('/', (req, res) => {
-	if (req.session.username) {
-	  // User is logged in, serve the media player directly
-	  return res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'));
-	} else {
-	  return res.status(200).json({
+app.get('/', (req, res) => {
+if (req.session.username) {
+	// User is logged in, serve the media player directly
+	return res.sendFile(path.join(__dirname, 'templates', 'videos.html'));
+	// return res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'));
+} else {
+	return res.status(200).json({
 		status: 'ERROR',
 		error: true,
 		message: 'Unauthorized access. Please log in first.',
-	  });
-	}
-  });
+	});
+}
+});
 
 app.get('/register', (req, res) => {
 	res.sendFile(path.join(__dirname, 'templates', 'adduser.html'));
@@ -155,7 +158,8 @@ app.get('/api/verify', async (req, res) => {
   
 	if (!email || !key) {
 		console.log('Missing email or key in the request');
-		return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing email or key in the request' });
+		return res.redirect('/');
+		// return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing email or key in the request' });
 	}
   
 	try {
@@ -165,14 +169,16 @@ app.get('/api/verify', async (req, res) => {
 			user.verified = true;
 			await user.save();
 			console.log('Email verified successfully!');
-			return res.status(200).json({ status: 'OK', message: 'Email verified successfully!' });
+			// return res.status(200).json({ status: 'OK', message: 'Email verified successfully!' });
 	  	} else {
 			console.log('Invalid verification link');
-			return res.status(200).json({ status: 'ERROR', error: true, message: 'Invalid verification link' });
+			// return res.status(200).json({ status: 'ERROR', error: true, message: 'Invalid verification link' });
 	  	}
+		return res.redirect('/');
 	} catch (e) {
 		console.log('Error verifying user.');
-		return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+		// return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+		res.redirect('/');
 	}
 });
 
@@ -200,6 +206,106 @@ app.post('/api/logout', (req, res) => {
 	console.log('Logged out successfully!');
 	return res.status(200).json({ status: 'OK', message: 'Logged out successfully!' });
 });
+
+app.post('/api/check-auth', (req, res) => {
+	if (req.session && req.session.username) {
+		return res.status(200).json({ isLoggedIn: true, userId: req.session.username });
+	} else {
+		return res.status(200).json({ isLoggedIn: false, userId: req.session.username });
+	}
+})
+
+const videosDir = path.join(__dirname, 'videos');
+
+let videoMetadata = {};
+const metadataPath = path.join(videosDir, 'm1.json');
+
+try {
+	const metadata = fs.readFileSync(metadataPath, 'utf-8');
+	videoMetadata = JSON.parse(metadata);
+} catch(error) {
+	console.error('Error reading m1.json:', error);
+}
+
+app.post('/api/videos/:count', async (req, res) => {
+	const count = parseInt(req.params.count, 10);
+
+	if (!count) {
+		return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
+	}
+
+	const start = 0;
+
+	try {
+		const files = fs.readdirSync(videosDir);
+
+		const videoFiles = files.filter((file) => {
+			const extension = path.extname(file).toLowerCase();
+			return extension === '.mp4';
+		});
+
+		const videos = videoFiles.map((file) => {
+			const title = file;
+			const description = videoMetadata[title];
+
+			return { title: title, description: description };
+		});
+
+		const selectedVideos = videos.slice(start, start + count);
+
+		return res.status(200).json({ status: 'OK', videos: selectedVideos });
+	} catch(e) {
+		return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+	}
+});
+
+const generateThumbnail = (videoPath, thumbnailPath) => {
+	return new Promise((resolve, reject) => {
+		ffmpeg(videoPath).on('end', () => {
+			resolve(thumbnailPath);
+		}).on('error', (e) => {
+			console.log("Error generating thumbnail", e);
+			reject(e);
+		}).screenshots({
+			count: 1,
+			folder: path.dirname(thumbnailPath),
+			filename: path.basename(thumbnailPath),
+			size: '320x240'
+		})
+	})
+}
+
+app.get('/videos', async (req, res) => {
+	try {
+		const files = fs.readdirSync(videosDir);
+		const videoPromises = files
+			.filter(file => path.extname(file).toLowerCase() === '.mp4')
+			.map(async (file) => {
+				const title = path.basename(file, '.mp4');
+				const videoPath = path.join(videosDir, file);
+				const thumbnailPath = path.join(videosDir, `${title}.jpg`);
+
+				if (!fs.existsSync(thumbnailPath)) {
+					await generateThumbnail(videoPath, thumbnailPath);
+				}
+
+				return { id: title, thumbnail: `/videos/${title}.jpg`, description: `Description for ${title}`}
+			});
+
+		const videos = await Promise.all(videoPromises);
+		res.status(200).json({
+			status: "OK",
+			videos
+		})
+	} catch (e) {
+		console.log("Error fetching videos: ", e);
+		return res.status(200).json({
+			status: "ERROR",
+			error: true,
+			message: e.message
+		})
+	}
+})
 
 // Protected media routes with authentication middleware
 app.get('/media/output.mpd', isAuthenticated, (req, res) => {

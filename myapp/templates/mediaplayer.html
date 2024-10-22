@@ -25,7 +25,7 @@
 <body>
     <h2>Media Player</h2>
     <video id="videoPlayer" class="video-js vjs-default-skin" controls preload="auto" width="640" height="360">
-        <source src="/media/output.mpd" type="application/dash+xml">
+        <!-- <source src="/media/output.mpd" type="application/dash+xml"> -->
         Your browser does not support the video tag.
     </video>
     <div id="playPauseBtn">Play/Pause</div>
@@ -37,7 +37,7 @@
         });
 
         player.ready(function() {
-            player.src({src: "/media/output.mpd", type: "application/dash+xml"});
+            // player.src({src: "/media/output.mpd", type: "application/dash+xml"});
         });
 
         const playPauseBtn = document.getElementById('playPauseBtn');
@@ -55,7 +55,7 @@
     <script>
         document.getElementById('logoutLink').onclick = async (e) => {
             e.preventDefault();
-            const response = await fetch('/logout', {
+            const response = await fetch('/api/logout', {
                 method: 'POST'
             });
             const result = await response.json();

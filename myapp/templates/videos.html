@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video List</title>
+    <style>
+        /* Add some basic styles */
+        #video-list {
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .video-item {
+            margin: 10px;
+            text-align: center;
+        }
+        .video-item img {
+            width: 200px; /* Set thumbnail width */
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Video List</h1>
+    <div id="video-list"></div>
+    <script>
+        let currentPage = 0;
+        const pageSize = 5; // Number of videos to fetch per request
+
+        async function fetchVideos(page) {
+            const response = await fetch(`/videos?page=${page}&size=${pageSize}`);
+            const data = await response.json();
+
+            if (data.status === 'OK') {
+                const videoList = document.getElementById('video-list');
+                data.videos.forEach(video => {
+                    const videoElement = document.createElement('div');
+                    videoElement.className = 'video-item';
+                    videoElement.innerHTML = `
+                        <h3>${video.title}</h3>
+                        <img src="${video.thumbnail}" alt="${video.title}" />
+                        <p>${video.description}</p>
+                        <a href="/play/${video.id}">Watch Video</a>
+                    `;
+                    videoList.appendChild(videoElement);
+                });
+            }
+        }
+
+        async function handleScroll() {
+            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight) {
+                currentPage++;
+                await fetchVideos(currentPage);
+            }
+        }
+
+        window.addEventListener('scroll', handleScroll);
+        fetchVideos(currentPage); // Initial fetch
+    </script>
+</body>
+</html>
