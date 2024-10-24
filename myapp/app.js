@@ -29,6 +29,8 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'templates')));
 //app.use('/media', express.static(path.join(__dirname, 'static', 'media')));
+app.use('/videos', express.static(path.join(__dirname, 'videos')));
+app.use('/processed_videos', express.static(path.join(__dirname, 'processed_videos')));
 
 
 mongoose.connect('mongodb://localhost:27017/user_db', {
@@ -270,10 +272,24 @@ const generateThumbnail = (videoPath, thumbnailPath) => {
 			count: 1,
 			folder: path.dirname(thumbnailPath),
 			filename: path.basename(thumbnailPath),
-			size: '320x240'
+			size: '320x240',
+			timemarks: ['0']
 		})
 	})
 }
+
+app.get('/api/thumbnail/:id', async (req, res) => {
+	const videoId = req.params.id;
+	const videoPath = path.join(__dirname, "videos", `${videoId}.mp4`);
+	const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}.jpg`);
+	try {
+		await generateThumbnail(videoPath, thumbnailPath);
+		res.sendFile(thumbnailPath);
+	} catch (e) {
+		console.error(e);
+		res.status(200).json({status: "ERROR", error: true, "message": e.message})
+	}
+})
 
 app.get('/videos', async (req, res) => {
 	try {
@@ -282,8 +298,8 @@ app.get('/videos', async (req, res) => {
 			.filter(file => path.extname(file).toLowerCase() === '.mp4')
 			.map(async (file) => {
 				const title = path.basename(file, '.mp4');
-				const videoPath = path.join(videosDir, file);
-				const thumbnailPath = path.join(videosDir, `${title}.jpg`);
+				const videoPath = path.join(__dirname, "videos", file);
+				const thumbnailPath = path.join(__dirname, "thumbnails", `${title}.jpg`);
 
 				if (!fs.existsSync(thumbnailPath)) {
 					await generateThumbnail(videoPath, thumbnailPath);
@@ -313,19 +329,41 @@ app.get('/media/output.mpd', isAuthenticated, (req, res) => {
 	res.sendFile(filePath);
   });
   
-  app.get('/media/chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, (req, res) => {
-	const { bandwidth, segmentNumber } = req.params;
-	const fileName = `chunk_${bandwidth}_${segmentNumber}.m4s`;
-	const filePath = path.join(__dirname, 'static', 'media', fileName);
-  
+app.get('/media/chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, (req, res) => {
+const { bandwidth, segmentNumber } = req.params;
+const fileName = `chunk_${bandwidth}_${segmentNumber}.m4s`;
+const filePath = path.join(__dirname, 'static', 'media', fileName);
+
 	res.sendFile(filePath, (err) => {
-	  if (err) {
+		if (err) {
 		return res
-		  .status(200)
-		  .json({ status: 'ERROR', error: true, message: err.message });
-	  }
+			.status(200)
+			.json({ status: 'ERROR', error: true, message: err.message });
+		}
 	});
-  });
+});
+
+app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
+    const videoId = req.params.id;
+    const manifestPath = path.join(__dirname, 'processed_videos', videoId, 'manifest.mpd');
+
+    res.sendFile(manifestPath, (err) => {
+        if (err) {
+            console.error('Error sending manifest:', err);
+            res.status(404).json({
+                status: 'ERROR',
+                error: true,
+                message: 'Manifest not found'
+            });
+        }
+    });
+});
+
+app.get('/play/:id', isAuthenticated, (req, res) => {
+    const videoId = req.params.id;
+    res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'), { query: { id: videoId } });
+});
+
 
 app.get('/player', (req, res) => {
 	if (!req.session.username) {

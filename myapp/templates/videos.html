@@ -8,14 +8,16 @@
         /* Add some basic styles */
         #video-list {
             display: flex;
-            flex-wrap: wrap;
+            flex-direction: column;
+            align-items: center;
         }
         .video-item {
-            margin: 10px;
+            margin: 10px 0;
             text-align: center;
+            width: 80%;
         }
         .video-item img {
-            width: 200px; /* Set thumbnail width */
+            width: 80%; /* Set thumbnail width */
             height: auto;
         }
     </style>
@@ -38,7 +40,7 @@
                     videoElement.className = 'video-item';
                     videoElement.innerHTML = `
                         <h3>${video.title}</h3>
-                        <img src="${video.thumbnail}" alt="${video.title}" />
+                        <img src= "/api/thumbnail/${video.id}" alt="${video.title}" />
                         <p>${video.description}</p>
                         <a href="/play/${video.id}">Watch Video</a>
                     `;

@@ -25,19 +25,23 @@
 <body>
     <h2>Media Player</h2>
     <video id="videoPlayer" class="video-js vjs-default-skin" controls preload="auto" width="640" height="360">
-        <!-- <source src="/media/output.mpd" type="application/dash+xml"> -->
+        <!-- <source src="../processed_videos/13801273-uhd_2160_3840_24fps/manifest.mpd" type="application/dash+xml"> -->
         Your browser does not support the video tag.
     </video>
     <div id="playPauseBtn">Play/Pause</div>
     <input type="range" id="seekBar" value="0" min="0" max="100" step="1">
     <p><a href="#" id="logoutLink">Logout</a></p>
     <script>
+
+        const videoId = window.location.pathname.split('/').pop();
+        const videoSrc = `../processed_videos/${videoId}/manifest.mpd`;
+        
         var player = videojs('videoPlayer', {
             techOrder: ['html5', 'dash']
         });
 
         player.ready(function() {
-            // player.src({src: "/media/output.mpd", type: "application/dash+xml"});
+            player.src({src: videoSrc, type: "application/dash+xml"});
         });
 
         const playPauseBtn = document.getElementById('playPauseBtn');
