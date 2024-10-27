@@ -57,11 +57,6 @@ transporter.verify(function (error, success) {
 	}
 });
 
-app.listen(PORT, () => {
-	console.log(`Server is running on port ${PORT}`);
-});
-
-
 // Authentication middleware
 function isAuthenticated(req, res, next) {
 	if (req.session && req.session.username) {
@@ -125,7 +120,7 @@ app.post('/api/adduser', async (req, res) => {
 		const params = `email=${encodeURIComponent(email)}&key=${encodeURIComponent(key)}`;
 		console.log('Parameters:', params);
 		//const encodedParams = new URLSearchParams(params).toString();
-		const verificationLink = `http://130.245.136.207:5000/api/verify?${params}`;
+		const verificationLink = `http://130.245.136.207/api/verify?${params}`;
 		console.log(verificationLink);
 
 		const mailOptions = {
@@ -370,4 +365,9 @@ app.get('/player', (req, res) => {
 		return res.redirect('/login_page');
 	}
 	res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'));
+});
+
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on port ${PORT}`);
 });
