@@ -144,40 +144,46 @@ app.post('/api/adduser', async (req, res) => {
 		return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
 	}
 });
-
 app.get('/api/verify', async (req, res) => {
-	const { email, key } = req.query;
+    const { email, key } = req.query;
 
-	console.log('Received verification request:');
-	console.log('Reqest:', req.query);
-  	console.log('Email:', email);
-  	console.log('Key:', key);
-  
-	if (!email || !key) {
-		console.log('Missing email or key in the request');
-		return res.redirect('/');
-		// return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing email or key in the request' });
-	}
-  
-	try {
-		const user = await User.findOne({ email, key });
-	  	console.log(user);
-	  	if (user) {
-			user.verified = true;
-			await user.save();
-			console.log('Email verified successfully!');
-			// return res.status(200).json({ status: 'OK', message: 'Email verified successfully!' });
-	  	} else {
-			console.log('Invalid verification link');
-			// return res.status(200).json({ status: 'ERROR', error: true, message: 'Invalid verification link' });
-	  	}
-		return res.redirect('/');
-	} catch (e) {
-		console.log('Error verifying user.');
-		// return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
-		res.redirect('/');
-	}
+    if (!email || !key) {
+        console.log('Missing email or key in the request');
+        return res.status(200).json({
+            status: 'ERROR',
+            error: true,
+            message: 'Missing email or key in the request',
+        });
+    }
+
+    try {
+        const user = await User.findOne({ email, key });
+        if (user) {
+            user.verified = true;
+            await user.save();
+            console.log('Email verified successfully!');
+            return res.status(200).json({
+                status: 'OK',
+                message: 'Email verified successfully!',
+            });
+        } else {
+            console.log('Invalid verification link');
+            return res.status(200).json({
+                status: 'ERROR',
+                error: true,
+                message: 'Invalid verification link',
+            });
+        }
+    } catch (e) {
+        console.log('Error verifying user:', e);
+        return res.status(200).json({
+            status: 'ERROR',
+            error: true,
+            message: e.message,
+        });
+    }
 });
+
 
 app.post('/api/login', async (req, res) => {
 	const { username, password } = req.body;
@@ -323,32 +329,73 @@ app.get('/media/output.mpd', isAuthenticated, (req, res) => {
 	const filePath = path.join(__dirname, 'static', 'media', 'output.mpd');
 	res.sendFile(filePath);
   });
+
+
+  app.get('/media/:videoId/:segment', isAuthenticated, (req, res) => {
+	const { videoId, segment } = req.params;
+	const filePath = path.join(__dirname, 'processed_videos', videoId, segment);
+  
+	res.sendFile(filePath, (err) => {
+	  if (err) {
+		console.error('Error sending media segment:', err);
+		return res.status(200).json({
+		  status: 'ERROR',
+		  error: true,
+		  message: 'Media segment not found',
+		});
+	  }
+	});
+  });
   
 app.get('/media/chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, (req, res) => {
-const { bandwidth, segmentNumber } = req.params;
-const fileName = `chunk_${bandwidth}_${segmentNumber}.m4s`;
-const filePath = path.join(__dirname, 'static', 'media', fileName);
+  const { bandwidth, segmentNumber } = req.params;
+  let fileName;
 
-	res.sendFile(filePath, (err) => {
-		if (err) {
-		return res
-			.status(200)
-			.json({ status: 'ERROR', error: true, message: err.message });
-		}
-	});
+  if (segmentNumber === 'init') {
+    fileName = `chunk_${bandwidth}_init.m4s`;
+  } else {
+    fileName = `chunk_${bandwidth}_${segmentNumber}.m4s`;
+  }
+
+  const filePath = path.join(__dirname, 'static', 'media', fileName);
+
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      console.error('Error sending media segment:', err);
+      return res.status(200).json({
+        status: 'ERROR',
+        error: true,
+        message: 'Media segment not found',
+      });
+    }
+  });
 });
+
 
 app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
     const videoId = req.params.id;
     const manifestPath = path.join(__dirname, 'processed_videos', videoId, 'manifest.mpd');
 
-    res.sendFile(manifestPath, (err) => {
+    fs.access(manifestPath, fs.constants.F_OK, (err) => {
         if (err) {
-            console.error('Error sending manifest:', err);
-            res.status(404).json({
+            console.error('Manifest not found at:', manifestPath);
+            return res.status(200).json({
                 status: 'ERROR',
                 error: true,
-                message: 'Manifest not found'
+                message: 'Manifest not found',
+            });
+        } else {
+            res.sendFile(manifestPath, (err) => {
+                if (err) {
+                    console.error('Error sending manifest:', err);
+                    if (!res.headersSent) {
+                        res.status(200).json({
+                            status: 'ERROR',
+                            error: true,
+                            message: 'Error sending manifest',
+                        });
+                    }
+                }
             });
         }
     });
