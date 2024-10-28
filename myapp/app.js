@@ -10,6 +10,15 @@ const ffmpeg = require('fluent-ffmpeg');
 
 const PORT = 5000;
 
+// Logging middleware
+app.use((req, res, next) => {
+	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+	console.log(`Headers:`, req.headers);
+	console.log(`Body:`, req.body);
+	console.log(`Session:`, req.session);
+	next();
+  });
+  
 app.use(bodyParser.json());
 
 app.use(
@@ -57,18 +66,22 @@ transporter.verify(function (error, success) {
 	}
 });
 
-// Authentication middleware
 function isAuthenticated(req, res, next) {
 	if (req.session && req.session.username) {
 	  return next();
 	} else {
-	  return res.status(200).json({
-		status: 'ERROR',
-		error: true,
-		message: 'Unauthorized access. Please log in first.',
-	  });
+	  if (req.accepts('html', 'xml', 'text')) {
+		res.status(401).send('Unauthorized');
+	  } else {
+		res.status(200).json({
+		  status: 'ERROR',
+		  error: true,
+		  message: 'Unauthorized access. Please log in first.',
+		});
+	  }
 	}
   }
+  
   
 
 app.get('/', (req, res) => {
