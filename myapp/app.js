@@ -10,15 +10,6 @@ const ffmpeg = require('fluent-ffmpeg');
 
 const PORT = 5000;
 
-// Logging middleware
-app.use((req, res, next) => {
-	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-	console.log(`Headers:`, req.headers);
-	console.log(`Body:`, req.body);
-	console.log(`Session:`, req.session);
-	next();
-  });
-  
 app.use(bodyParser.json());
 
 app.use(
@@ -31,17 +22,35 @@ app.use(
 	})
 );
 
+// Logging middleware
+app.use((req, res, next) => {
+	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+	console.log(`Headers:`, req.headers);
+	console.log(`Body:`, req.body);
+	console.log(`Session:`, req.session);
+	next();
+});
+
 app.use((req, res, next) => {
 	res.setHeader('X-CSE356', '66d1c9697f77bf55c5004757');
 	next();
 });
 
 app.use(express.static(path.join(__dirname, 'templates')));
-//app.use('/media', express.static(path.join(__dirname, 'static', 'media')));
+app.use('/media', express.static(path.join(__dirname, 'media')));
 app.use('/videos', express.static(path.join(__dirname, 'videos')));
-app.use('/processed_videos', express.static(path.join(__dirname, 'processed_videos')));
+//app.use('/processed_videos', express.static(path.join(__dirname, 'processed_videos')));
 
-
+// Error handling middleware
+app.use((err, req, res, next) => {
+	console.error(err.stack);
+	res.status(200).json({
+	  status: 'ERROR',
+	  error: true,
+	  message: err.message || 'Internal server error',
+	});
+  });
+  
 mongoose.connect('mongodb://localhost:27017/user_db', {
 	useNewUrlParser: true,
 	useUnifiedTopology: true,
@@ -71,7 +80,11 @@ function isAuthenticated(req, res, next) {
 	  return next();
 	} else {
 	  if (req.accepts('html', 'xml', 'text')) {
-		res.status(401).send('Unauthorized');
+		res.status(200).json({
+			status: 'ERROR',
+			error: true,
+			message: 'Unauthorized',
+		});
 	  } else {
 		res.status(200).json({
 		  status: 'ERROR',
@@ -275,22 +288,62 @@ app.post('/api/videos/:count', async (req, res) => {
 	}
 });
 
+// const generateThumbnail = (videoPath, thumbnailPath) => {
+//     return new Promise((resolve, reject) => {
+//         ffmpeg(videoPath)
+//             .on('end', () => {
+//                 console.log(`Thumbnail generated at ${thumbnailPath}`);
+//                 resolve(thumbnailPath);
+//             })
+//             .on('error', (e) => {
+//                 console.error("Error generating thumbnail:", e);
+//                 reject(e);
+//             })
+//             // Apply scaling and padding through videoFilters
+//             .videoFilters([
+//                 'scale=320:180:force_original_aspect_ratio=decrease',
+//                 'pad=320:180:(ow-iw)/2:(oh-ih)/2:black'
+//             ])
+//             .screenshots({
+//                 count: 1,
+//                 folder: path.dirname(thumbnailPath),
+//                 filename: path.basename(thumbnailPath),
+//                 // Remove the 'size' option to prevent FFmpeg from adding another -vf
+//                 // size: '320x180', // This line should be omitted
+//                 timemarks: ['0']
+//             });
+//     });
+// };
+
 const generateThumbnail = (videoPath, thumbnailPath) => {
-	return new Promise((resolve, reject) => {
-		ffmpeg(videoPath).on('end', () => {
-			resolve(thumbnailPath);
-		}).on('error', (e) => {
-			console.log("Error generating thumbnail", e);
-			reject(e);
-		}).screenshots({
-			count: 1,
-			folder: path.dirname(thumbnailPath),
-			filename: path.basename(thumbnailPath),
-			size: '320x240',
-			timemarks: ['0']
-		})
-	})
-}
+    return new Promise((resolve, reject) => {
+        ffmpeg(videoPath)
+            .on('end', () => {
+                console.log(`Thumbnail generated at ${thumbnailPath}`);
+                resolve(thumbnailPath);
+            })
+            .on('error', (e) => {
+                console.error("Error generating thumbnail:", e);
+                reject(e);
+            })
+            // Specify the output file
+            .output(thumbnailPath)
+            // Disable audio processing
+            .noAudio()
+            // Take only one frame
+            .frames(1)
+            // Apply scaling and padding filters
+            .videoFilters([
+                'scale=320:180:force_original_aspect_ratio=decrease',
+                'pad=320:180:(ow-iw)/2:(oh-ih)/2:black'
+            ])
+            // Seek to the first frame (timemark 0)
+            .seekInput(0)
+            // Execute the FFmpeg command
+            .run();
+    });
+};
+
 
 app.get('/api/thumbnail/:id', async (req, res) => {
 	const videoId = req.params.id;
@@ -338,15 +391,61 @@ app.get('/videos', async (req, res) => {
 })
 
 // Protected media routes with authentication middleware
-app.get('/media/output.mpd', isAuthenticated, (req, res) => {
-	const filePath = path.join(__dirname, 'static', 'media', 'output.mpd');
-	res.sendFile(filePath);
+// app.get('/videos/media/output.mpd', isAuthenticated, (req, res) => {
+// 	const filePath = path.join(__dirname, 'static', 'media', 'output.mpd');
+// 	res.sendFile(filePath);
+// });
+
+app.get('/media/:filename', isAuthenticated, (req, res) => {
+	// Authentication check
+	// if (!(req.session && req.session.username)) {
+	//   return res.status(200).json({
+	// 	status: 'ERROR',
+	// 	error: true,
+	// 	message: 'Unauthorized access. Please log in first.',
+	//   });
+	// }
+  
+	const { filename } = req.params;
+	const filePath = path.join(__dirname, 'media', filename);
+  
+	fs.access(filePath, fs.constants.F_OK, (err) => {
+	  if (err) {
+		console.error('File not found at:', filePath);
+		return res.status(200).json({
+		  status: 'ERROR',
+		  error: true,
+		  message: 'Media segment not found',
+		});
+	  } else {
+		res.sendFile(filePath, (err) => {
+		  if (err) {
+			console.error('Error sending media segment:', err);
+			if (!res.headersSent) {
+			  res.status(200).json({
+				status: 'ERROR',
+				error: true,
+				message: 'Error sending media segment',
+			  });
+			}
+		  }
+		});
+	  }
+	});
   });
+  
 
-
-  app.get('/media/:videoId/:segment', isAuthenticated, (req, res) => {
+app.get('/media/:videoId/:segment', isAuthenticated, (req, res) => {
+	// if (!(req.session && req.session.username)) {
+	// 	return res.status(200).json({
+	// 	  status: 'ERROR',
+	// 	  error: true,
+	// 	  message: 'Unauthorized access. Please log in first.',
+	// 	});
+	//   }
+	
 	const { videoId, segment } = req.params;
-	const filePath = path.join(__dirname, 'processed_videos', videoId, segment);
+	const filePath = path.join(__dirname, 'media', `${videoId}.mp4`);
   
 	res.sendFile(filePath, (err) => {
 	  if (err) {
@@ -360,65 +459,96 @@ app.get('/media/output.mpd', isAuthenticated, (req, res) => {
 	});
   });
   
-app.get('/media/chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, (req, res) => {
-  const { bandwidth, segmentNumber } = req.params;
-  let fileName;
+app.get('/media/:videoId_chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, (req, res) => {
+	// if (!isAuthenticated) {
+	// 	return res.status(200).json({ status: 'ERROR', error: true, message: "Must log in first"});
+	// }
 
-  if (segmentNumber === 'init') {
-    fileName = `chunk_${bandwidth}_init.m4s`;
-  } else {
-    fileName = `chunk_${bandwidth}_${segmentNumber}.m4s`;
-  }
+	// if (!(req.session && req.session.username)) {
+	// 	return res.status(200).json({
+	// 	  status: 'ERROR',
+	// 	  error: true,
+	// 	  message: 'Unauthorized access. Please log in first.',
+	// 	});
+	//   }
+	
+  
+	const { videoId, bandwidth, segmentNumber } = req.params;
+  	let fileName;
 
-  const filePath = path.join(__dirname, 'static', 'media', fileName);
+  	if (segmentNumber === 'init') {
+    	fileName = `${videoId}_chunk_${bandwidth}_init.m4s`;
+  	} else {
+    	fileName = `${videoId}_chunk_${bandwidth}_${segmentNumber}.m4s`;
+  	}
 
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.error('Error sending media segment:', err);
-      return res.status(200).json({
-        status: 'ERROR',
-        error: true,
-        message: 'Media segment not found',
-      });
-    }
-  });
+  	const filePath = path.join(__dirname, 'media', fileName);
+
+  	res.sendFile(filePath, (err) => {
+    	if (err) {
+      		console.error('Error sending media segment:', err);
+      		return res.status(200).json({
+        		status: 'ERROR',
+        		error: true,
+        		message: 'Media segment not found',
+      		});
+    	}
+  	});
 });
-
 
 app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
-    const videoId = req.params.id;
-    const manifestPath = path.join(__dirname, 'processed_videos', videoId, 'manifest.mpd');
+	// Authentication check
+	// if (!(req.session && req.session.username)) {
+	//   return res.status(200).json({
+	// 	status: 'ERROR',
+	// 	error: true,
+	// 	message: 'Unauthorized access. Please log in first.',
+	//   });
+	// }
+  
+	const videoId = req.params.id;
+	const manifestPath = path.join(__dirname, 'media', `${videoId}_output.mpd`);
+  
+	fs.access(manifestPath, fs.constants.F_OK, (err) => {
+	  if (err) {
+		console.error('Manifest not found at:', manifestPath);
+		return res.status(200).json({
+		  status: 'ERROR',
+		  error: true,
+		  message: 'Manifest not found',
+		});
+	  } else {
+		res.sendFile(manifestPath, (err) => {
+		  if (err) {
+			console.error('Error sending manifest:', err);
+			if (!res.headersSent) {
+			  res.status(200).json({
+				status: 'ERROR',
+				error: true,
+				message: 'Error sending manifest',
+			  });
+			}
+		  }
+		});
+	  }
+	});
+  });
+  
 
-    fs.access(manifestPath, fs.constants.F_OK, (err) => {
-        if (err) {
-            console.error('Manifest not found at:', manifestPath);
-            return res.status(200).json({
-                status: 'ERROR',
-                error: true,
-                message: 'Manifest not found',
-            });
-        } else {
-            res.sendFile(manifestPath, (err) => {
-                if (err) {
-                    console.error('Error sending manifest:', err);
-                    if (!res.headersSent) {
-                        res.status(200).json({
-                            status: 'ERROR',
-                            error: true,
-                            message: 'Error sending manifest',
-                        });
-                    }
-                }
-            });
-        }
-    });
+  app.get('/play/:id', isAuthenticated, (req, res) => {
+	// Authentication check
+	// if (!(req.session && req.session.username)) {
+	//   return res.status(200).json({
+	// 	status: 'ERROR',
+	// 	error: true,
+	// 	message: 'Unauthorized access. Please log in first.',
+	//   });
+	// }
+  
+	const videoId = req.params.id;
+	res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'), { query: { id: videoId } });
 });
-
-app.get('/play/:id', isAuthenticated, (req, res) => {
-    const videoId = req.params.id;
-    res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'), { query: { id: videoId } });
-});
-
+  
 
 app.get('/player', (req, res) => {
 	if (!req.session.username) {
