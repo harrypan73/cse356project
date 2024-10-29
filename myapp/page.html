@@ -1,0 +1,250 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Media Player</title>
+    <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
+    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/videojs-dash@2.11.0/dist/videojs-dash.min.js"></script>
+    <style>
+        #playPauseBtn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #fff;
+            cursor: pointer;
+            text-align: center;
+            border-radius: 4px;
+        }
+        #playPauseBtn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h2>Media Player</h2>
+    <video id="videoPlayer" class="video-js vjs-default-skin" controls preload="auto" width="640" height="360" data-setup='{}'>
+        Your browser does not support the video tag.
+    </video>
+    <div id="playPauseBtn">Play/Pause</div>
+    <input type="range" id="seekBar" value="0" min="0" max="100" step="1">
+    <p><a href="#" id="logoutLink">Logout</a></p>
+    <script>
+        // Extract the video ID from the URL
+        const videoId = window.location.pathname.split('/').pop();
+        console.log(videoId);
+
+        // Construct the video source URL correctly using backticks
+        const videoSrc = `/media/${videoId}_output.mpd`;
+        console.log(videoSrc);
+
+        // Initialize the Video.js player
+        var player = videojs('videoPlayer', {
+            techOrder: ['dash', 'html5']
+        });
+
+        player.ready(function() {
+            player.src({src: videoSrc, type: "application/dash+xml"});
+        });
+
+        const playPauseBtn = document.getElementById('playPauseBtn');
+
+        playPauseBtn.addEventListener('click', function () {
+            if (player.paused()) {
+                player.play();
+                playPauseBtn.textContent = 'Pause';
+            } else {
+                player.pause();
+                playPauseBtn.textContent = 'Play';
+            }
+        });
+    </script>
+    <script>
+        document.getElementById('logoutLink').onclick = async (e) => {
+            e.preventDefault();
+            const response = await fetch('/api/logout', {
+                method: 'POST'
+            });
+            const result = await response.json();
+            alert(result.message);
+            window.location.href = '/login_page';
+        };
+    </script>
+</body>
+</html> -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Media Player</title>
+    <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
+    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/videojs-dash@2.11.0/dist/videojs-dash.min.js"></script>
+    <style>
+        .video-container {
+            margin-bottom: 20px; /* Space between video players */
+        }
+        #playPauseBtn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #fff;
+            cursor: pointer;
+            text-align: center;
+            border-radius: 4px;
+            margin-top: 10px; /* Add some space above the button */
+        }
+        #playPauseBtn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h2>Media Player</h2>
+    <div id="video-list"></div>
+    <p><a href="#" id="logoutLink">Logout</a></p>
+    <script>
+        let currentPage = 0;
+        const pageSize = 10;
+        let isFetching = false;
+        let currentVideoId = '';
+        let currentPlayer = null; // Store the current player reference
+
+        async function fetchVideos(page) {
+            if (isFetching) return;
+            isFetching = true;
+            const response = await fetch("/api/videos", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ page, count: pageSize }),
+            });
+            isFetching = false;
+            return await response.json();
+        }
+
+        function createVideoPlayer(videoId, title) {
+            const videoList = document.getElementById('video-list');
+            const videoElement = document.createElement('div');
+            videoElement.className = 'video-container';
+            videoElement.setAttribute('data-videoid', videoId);
+            videoElement.innerHTML = `
+                <h3>${title}</h3>
+                <video id="video-${videoId}" class="video-js vjs-default-skin" controls preload="auto" width="640" height="360" data-setup='{}'>
+                    Your browser does not support the video tag.
+                </video>
+                <div class="playPauseBtn" data-video-id="${videoId}">Play</div>
+                <input type="range" id="seekBar-${videoId}" value="0" min="0" max="100" step="1">
+            `;
+            videoList.appendChild(videoElement);
+
+            const videoSrc = `/media/${videoId}_output.mpd`;
+            initializePlayer(videoId, videoSrc);
+
+            // Attach click event to the play button using data attribute
+            const playBtn = videoElement.querySelector('.playPauseBtn');
+            playBtn.addEventListener('click', function () {
+                const player = videojs(`video-${playBtn.dataset.videoId}`);
+                if (player.paused()) {
+                    player.play();
+                    playBtn.textContent = 'Pause';
+                } else {
+                    player.pause();
+                    playBtn.textContent = 'Play';
+                }
+            });
+        }
+
+        function initializePlayer(videoId, videoSrc) {
+            var player = videojs(`video-${videoId}`, {
+                techOrder: ['dash', 'html5']
+            });
+
+            player.ready(function() {
+                player.src({src: videoSrc, type: "application/dash+xml"});
+            });
+
+            // Update the current player reference
+            player.on('play', () => {
+                currentPlayer = player;
+            });
+            player.on('pause', () => {
+                const playBtn = document.querySelector(`.playPauseBtn[data-video-id="${videoId}"]`);
+                if (playBtn) {
+                    playBtn.textContent = 'Play';
+                }
+            });
+        }
+
+        function updateURL(videoId) {
+            const newURL = `${window.location.origin}/play/${encodeURIComponent(videoId)}`;
+            history.replaceState(null, '', newURL);
+        }
+
+        function handleIntersection(entries, observer) {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const videoId = entry.target.getAttribute('data-videoid');
+                    if (videoId && currentVideoId !== videoId) {
+                        currentVideoId = videoId;
+                        updateURL(videoId);
+                        if (currentPlayer) {
+                            currentPlayer.pause(); // Pause the previous player
+                        }
+                        currentPlayer = videojs(`video-${videoId}`);
+                    }
+                }
+            });
+        }
+
+        const observerOptions = {
+            root: null, // Use the viewport as the root
+            rootMargin: '0px',
+            threshold: 0.5 // 50% of the video container is visible
+        };
+
+        const observer = new IntersectionObserver(handleIntersection, observerOptions);
+
+        async function handleScroll() {
+            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100) {
+                currentPage++;
+                const data = await fetchVideos(currentPage);
+                if (data.status === 'OK' && data.videos.length > 0) {
+                    data.videos.forEach(video => {
+                        createVideoPlayer(video.id, video.title);
+                    });
+                }
+            }
+        }
+
+        window.addEventListener('scroll', handleScroll);
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            await loadInitialVideos();
+        });
+
+        async function loadInitialVideos() {
+            const initialData = await fetchVideos(currentPage);
+            if (initialData.status === 'OK') {
+                initialData.videos.forEach(video => {
+                    createVideoPlayer(video.id, video.title);
+                });
+            }
+        }
+
+        document.getElementById('logoutLink').onclick = async (e) => {
+            e.preventDefault();
+            const response = await fetch('/api/logout', {
+                method: 'POST'
+            });
+            const result = await response.json();
+            alert(result.message);
+            window.location.href = '/login_page';
+        };
+    </script>
+</body>
+</html>
+

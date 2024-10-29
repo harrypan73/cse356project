@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+Server: nginx/1.18.0 (Ubuntu)
+Date: Tue, 29 Oct 2024 03:34:07 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 57
+Connection: keep-alive
+X-Powered-By: Express
+X-CSE356: 66d1c9697f77bf55c5004757
+ETag: W/"39-mSYxGTutCjcWTilpoMsGYlHot4w"
+
+{"status":"ERROR","error":true,"message":"Not logged in"}
