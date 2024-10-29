@@ -85,13 +85,16 @@ function isAuthenticated(req, res, next) {
 			error: true,
 			message: 'Unauthorized',
 		});
-	  } else {
-		res.status(200).json({
-		  status: 'ERROR',
-		  error: true,
-		  message: 'Unauthorized access. Please log in first.',
-		});
-	  }
+		} else {
+			return res.sendFile(path.join(__dirname, 'templates', 'login.html'));
+		}
+	//   } else {
+	// 	res.status(200).json({
+	// 	  status: 'ERROR',
+	// 	  error: true,
+	// 	  message: 'Unauthorized access. Please log in first.',
+	// 	});
+	//   }
 	}
   }
   
@@ -103,6 +106,7 @@ if (req.session.username) {
 	return res.sendFile(path.join(__dirname, 'templates', 'videos.html'));
 	// return res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'));
 } else {
+	return res.sendFile(path.join(__dirname, 'templates', 'login.html'));
 	return res.status(200).json({
 		status: 'ERROR',
 		error: true,
@@ -256,8 +260,9 @@ try {
 	console.error('Error reading m1.json:', error);
 }
 
-app.post('/api/videos/:count', async (req, res) => {
-	const count = parseInt(req.params.count, 10);
+app.post('/api/videos/', async (req, res) => {
+	//const count = parseInt(req.params.count, 10);
+	const {count} = req.body;
 
 	if (!count) {
 		return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
@@ -277,7 +282,7 @@ app.post('/api/videos/:count', async (req, res) => {
 			const title = file;
 			const description = videoMetadata[title];
 
-			return { title: title, description: description };
+			return { id: title.replace(/\.mp4$/, ""), title: title, description: description };
 		});
 
 		const selectedVideos = videos.slice(start, start + count);
@@ -345,20 +350,85 @@ const generateThumbnail = (videoPath, thumbnailPath) => {
 };
 
 
+// app.get('/api/thumbnail/:id', async (req, res) => {
+// 	const videoId = req.params.id;
+// 	const videoPath = path.join(__dirname, "videos", `${videoId}.mp4`);
+// 	const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}_thumbnail.jpg`);
+// 	try {
+// 		//await generateThumbnail(videoPath, thumbnailPath);
+// 		res.sendFile(thumbnailPath);
+// 	} catch (e) {
+// 		console.error(e);
+// 		res.status(200).json({status: "ERROR", error: true, "message": e.message})
+// 	}
+// })
+
 app.get('/api/thumbnail/:id', async (req, res) => {
 	const videoId = req.params.id;
 	const videoPath = path.join(__dirname, "videos", `${videoId}.mp4`);
-	const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}.jpg`);
-	try {
-		await generateThumbnail(videoPath, thumbnailPath);
-		res.sendFile(thumbnailPath);
-	} catch (e) {
-		console.error(e);
-		res.status(200).json({status: "ERROR", error: true, "message": e.message})
+	const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}_thumbnail.jpg`);
+		
+	// Check if user is logged in
+	if (!req.session.username) {
+		return res.status(200).json({ status: "ERROR", error: true, message: "Not logged in" });
 	}
+	
+	// Check if the thumbnail file exists
+	fs.stat(thumbnailPath, (err) => {
+		if (err) {
+			// If the file does not exist, send an error response
+			console.error(err);
+			return res.status(404).json({ status: "ERROR", error: true, message: "Thumbnail not found" });
+		}
+
+		// Send the existing thumbnail file
+		res.sendFile(thumbnailPath);
+	});
 })
 
-app.get('/videos', async (req, res) => {
+// app.get("/api/thumbnail/:id", (req, res) => {
+// 	const videoId = req.params.id;
+// 	const thumbnailPath = path.join(__dirname, `thumbnails/${videoId}_thumbnail.jpg`);
+// 	console.log("SKANDOUHWIJXW: ", thumbnailPath)
+  
+// 	// Check if user is logged in
+// 	if (!req.session.user) {
+// 	  return res
+// 		.status(200)
+// 		.json({ status: "ERROR", error: true, message: "Not logged in" });
+// 	}
+  
+// 	// Check if the thumbnail file exists
+// 	fs.access(thumbnailPath, fs.constants.F_OK, (err) => {
+// 	  if (err) {
+// 		console.error(`Thumbnail not found for video ID: ${videoId}`);
+// 		return res
+// 		  .status(200)
+// 		  .json({ status: "ERROR", error: true, message: "Thumbnail not found" });
+// 	  }
+  
+// 	  // Track if client aborts
+// 	  req.on("aborted", () => {
+// 		console.warn(`Client aborted request for video ID: ${videoId}`);
+// 	  });
+  
+// 	  // Serve the thumbnail file
+// 	  res.sendFile(thumbnailPath, (err) => {
+// 		if (err) {
+// 		  console.error(`Error sending thumbnail for video ID: ${videoId}`, err);
+// 		  res.status(200).json({
+// 			status: "ERROR",
+// 			error: true,
+// 			message: "Thumbnail didnt send",
+// 		  });
+// 		}
+// 	  });
+// 	});
+//   });
+
+
+
+  app.get('/videos', async (req, res) => {
 	try {
 		const files = fs.readdirSync(videosDir);
 		const videoPromises = files
@@ -387,9 +457,52 @@ app.get('/videos', async (req, res) => {
 			error: true,
 			message: e.message
 		})
-	}
-})
+	}})
 
+// app.get('/videos', async (req, res) => {
+// 	// Authentication check
+// 	if (!req.session.username) {
+// 	  return res.status(200).json({
+// 		status: 'ERROR',
+// 		error: true,
+// 		message: 'Unauthorized access. Please log in first.',
+// 	  });
+// 	}
+  
+// 	const page = parseInt(req.query.page) || 0;
+// 	const size = parseInt(req.query.size) || 10;
+  
+// 	try {
+// 	  const files = fs.readdirSync(videosDir);
+  
+// 	  const videoFiles = files.filter(file => path.extname(file).toLowerCase() === '.mp4');
+  
+// 	  const videos = videoFiles.map(file => {
+// 		const title = path.basename(file, '.mp4');
+// 		const description = videoMetadata[title] || `Description for ${title}`;
+  
+// 		return { id: title, title: title, description: description };
+// 	  });
+  
+// 	  // Implement pagination
+// 	  const start = page * size;
+// 	  const end = start + size;
+// 	  const selectedVideos = videos.slice(start, end);
+  
+// 	  res.status(200).json({
+// 		status: "OK",
+// 		videos: selectedVideos
+// 	  });
+// 	} catch (e) {
+// 	  console.log("Error fetching videos: ", e);
+// 	  return res.status(200).json({
+// 		status: "ERROR",
+// 		error: true,
+// 		message: e.message
+// 	  });
+// 	}
+//   });
+  
 // Protected media routes with authentication middleware
 // app.get('/videos/media/output.mpd', isAuthenticated, (req, res) => {
 // 	const filePath = path.join(__dirname, 'static', 'media', 'output.mpd');
@@ -460,6 +573,8 @@ app.get('/media/:videoId/:segment', isAuthenticated, (req, res) => {
   });
   
 app.get('/media/:videoId_chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, (req, res) => {
+
+	console.log("IN /media/:videoId_chunk...");
 	// if (!isAuthenticated) {
 	// 	return res.status(200).json({ status: 'ERROR', error: true, message: "Must log in first"});
 	// }
@@ -497,15 +612,9 @@ app.get('/media/:videoId_chunk_:bandwidth_:segmentNumber.m4s', isAuthenticated, 
 });
 
 app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
-	// Authentication check
-	// if (!(req.session && req.session.username)) {
-	//   return res.status(200).json({
-	// 	status: 'ERROR',
-	// 	error: true,
-	// 	message: 'Unauthorized access. Please log in first.',
-	//   });
-	// }
-  
+
+	console.log("IN /api/manifest/:id with file", req.params.id);
+
 	const videoId = req.params.id;
 	const manifestPath = path.join(__dirname, 'media', `${videoId}_output.mpd`);
   
@@ -546,6 +655,7 @@ app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
 	// }
   
 	const videoId = req.params.id;
+	console.log("ID : ", videoId);
 	res.sendFile(path.join(__dirname, 'templates', 'mediaplayer.html'), { query: { id: videoId } });
 });
   
