@@ -1,203 +1,9 @@
-<!-- <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Media Player</title>
-    <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
-    <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
-    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/videojs-dash@2.11.0/dist/videojs-dash.min.js"></script>
-    <style>
-        body, html {
-            margin: 0;
-            height: 100%;
-            overflow: hidden; /* Prevent default scrolling */
-        }
-        #video-list {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh; /* Full viewport height */
-            overflow-y: scroll;
-            scroll-snap-type: y mandatory; /* Enable vertical snap */
-            -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-        }
-        .video-container {
-            scroll-snap-align: start; /* Snap to start of each item */
-            margin-bottom: 20px; /* Space between video players */
-            width: 100%; /* Full width */
-            height: 100vh; /* Full viewport height */
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            box-sizing: border-box;
-            padding: 20px;
-        }
-        #playPauseBtn {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #007bff;
-            color: #fff;
-            cursor: pointer;
-            text-align: center;
-            border-radius: 4px;
-            margin-top: 10px; /* Add some space above the button */
-        }
-        #playPauseBtn:hover {
-            background-color: #0056b3;
-        }
-    </style>
-</head>
-<body>
-    <h2 style="text-align:center; position: fixed; top: 10px; width: 100%; z-index: 1000;">Media Player</h2>
-    <div id="video-list"></div>
-    <p><a href="#" id="logoutLink">Logout</a></p>
-    <script>
-        let currentPage = 0;
-        const pageSize = 10;
-        let isFetching = false;
-        let currentPlayer = null; // Store the current player reference
-
-        // Function to update the URL without reloading the page
-        function updateURL(videoId) {
-            const newURL = `${window.location.origin}/play/${encodeURIComponent(videoId)}`;
-            history.replaceState(null, '', newURL);
-        }
-
-        // Function to handle intersection changes
-        function handleIntersection(entries) {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const videoId = entry.target.getAttribute('data-videoid');
-                    if (videoId) {
-                        updateURL(videoId); // Update URL when this video comes into view
-                    }
-                }
-            });
-        }
-
-        // Create an IntersectionObserver instance
-        const observer = new IntersectionObserver(handleIntersection, {
-            root: document.getElementById('video-list'), // Scroll container
-            rootMargin: '0px',
-            threshold: 0.6 // 60% of the video item is visible
-        });
-
-        async function fetchVideos(page) {
-            if (isFetching) return;
-            isFetching = true;
-            const response = await fetch("/api/videos", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ page, count: pageSize }),
-            });
-            isFetching = false;
-            return await response.json();
-        }
-
-        function createVideoPlayer(videoId, title) {
-            const videoList = document.getElementById('video-list');
-            const videoElement = document.createElement('div');
-            videoElement.className = 'video-container';
-            videoElement.setAttribute('data-videoid', videoId);
-            videoElement.innerHTML = `
-                <h3>${title}</h3>
-                <video id="video-${videoId}" class="video-js vjs-default-skin" controls preload="auto" width="640" height="360" data-setup='{}'>
-                    Your browser does not support the video tag.
-                </video>
-                <div id="playPauseBtn" data-video-id="${videoId}">Play</div>
-            `;
-            videoList.appendChild(videoElement);
-            observer.observe(videoElement); // Observe this video element
-
-            const videoSrc = `/media/${videoId}_output.mpd`;
-            initializePlayer(videoId, videoSrc);
-
-            // Attach click event to the play button
-            const playBtn = videoElement.querySelector('#playPauseBtn');
-            playBtn.addEventListener('click', function () {
-                const player = videojs(`video-${playBtn.dataset.videoId}`);
-                if (player.paused()) {
-                    if (currentPlayer) {
-                        currentPlayer.pause(); // Pause currently playing video
-                    }
-                    player.play();
-                    playBtn.textContent = 'Pause';
-                    currentPlayer = player; // Update current player reference
-                } else {
-                    player.pause();
-                    playBtn.textContent = 'Play';
-                }
-            });
-        }
-
-        function initializePlayer(videoId, videoSrc) {
-            var player = videojs(`video-${videoId}`, {
-                techOrder: ['dash', 'html5']
-            });
-
-            player.ready(function() {
-                player.src({src: videoSrc, type: "application/dash+xml"});
-            });
-
-            player.on('pause', () => {
-                const playBtn = document.querySelector(`div[data-video-id="${videoId}"]`);
-                if (playBtn) {
-                    playBtn.textContent = 'Play';
-                }
-            });
-        }
-
-        async function handleWheel(event) {
-            const videoList = document.getElementById('video-list');
-            if (event.deltaY > 0) { // Scroll down
-                if (videoList.scrollTop + videoList.clientHeight >= videoList.scrollHeight - 100) {
-                    currentPage++;
-                    const data = await fetchVideos(currentPage);
-                    if (data.status === 'OK' && data.videos.length > 0) {
-                        data.videos.forEach(video => {
-                            createVideoPlayer(video.id, video.title);
-                        });
-                    } else {
-                        // No more videos to load
-                        window.removeEventListener('wheel', handleWheel);
-                    }
-                }
-            }
-        }
-
-        window.addEventListener('DOMContentLoaded', async () => {
-            const initialData = await fetchVideos(currentPage);
-            if (initialData.status === 'OK') {
-                initialData.videos.forEach(video => {
-                    createVideoPlayer(video.id, video.title);
-                });
-            }
-            document.getElementById('video-list').addEventListener('wheel', handleWheel);
-        });
-
-        document.getElementById('logoutLink').onclick = async (e) => {
-            e.preventDefault();
-            const response = await fetch('/api/logout', {
-                method: 'POST'
-            });
-            const result = await response.json();
-            alert(result.message);
-            window.location.href = '/login_page';
-        };
-    </script>
-</body>
-</html> -->
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Media Player</title>
+    <title>Multi-Video Player</title>
     <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
     <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
     <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
@@ -221,8 +27,9 @@
         video {
             width: 100%;
             max-width: 720px;
+            display: none; /* Hide all video elements except the current one */
         }
-        #playPauseBtn {
+        #playPauseBtn, .likeDislikeBtns button {
             cursor: pointer;
             padding: 10px;
             background-color: #007bff;
@@ -231,7 +38,7 @@
             border-radius: 5px;
             margin-top: 10px;
         }
-        #playPauseBtn:hover {
+        #playPauseBtn:hover, .likeDislikeBtns button:hover {
             background-color: #0056b3;
         }
         #videoTitle {
@@ -245,108 +52,217 @@
 <body>
     <div id="video-container">
         <h1 id="videoTitle">Loading Video...</h1>
-        <video id="videoPlayer" class="video-js vjs-default-skin" controls autoplay></video>
+        <video id="videoPlayer1" class="video-js vjs-default-skin" controls autoplay></video>
+        <video id="videoPlayer2" class="video-js vjs-default-skin"></video>
+        <video id="videoPlayer3" class="video-js vjs-default-skin"></video>
         <div id="playPauseBtn">Play</div>
+        <div class="likeDislikeBtns">
+            <button class="likeBtn" name="like">Like</button>
+            <button class="dislikeBtn" name="dislike">Dislike</button>
+        </div>
     </div>
 
     <script>
-        const player = dashjs.MediaPlayer().create();
-        const videoElement = document.getElementById('videoPlayer');
-        const playPauseBtn = document.getElementById('playPauseBtn');
-        let videoIds = ['1580117-uhd_3840_2160_30fps', '1874710-hd_2048_1024_30fps', '4008176-uhd_2160_4096_25fps'];  // Array to store video manifest URLs
-        let currentVideoIndex = 0;  // Track the current video
-        let isFetching = false;  // Flag to prevent multiple fetch requests
-        let reachedEnd = false;  // Flag to indicate there are no more videos to fetch
+const videoId = "{{videoId}}";  // This will be replaced by the actual videoId in the response
+        const videoIds = [videoId, "poopharry1731286817910", "hot-special-gayalgrader+TgMBEyLoxy1731296809048"];  // Example video IDs
+        let currentVideoIndex = 0;  // Index of currently playing video
+        let isFetching = false;
+        let reachedEnd = false;
 
-        // Initialize the player
-        player.initialize(videoElement, '', false);
+        // Create an array of players
+        let players = [
+            dashjs.MediaPlayer().create(),
+            dashjs.MediaPlayer().create(),
+            dashjs.MediaPlayer().create(),
+        ];
 
-        // Load the video manifest for the given video index
+        // Initialize the first batch of players
+        players.forEach((player, index) => {
+            const videoElement = document.getElementById(`videoPlayer${index + 1}`);
+            player.initialize(videoElement, '', false);
+        });
+
+        // Load the video for the given index and switch to it
         function loadVideo(videoIndex) {
             if (videoIndex >= 0 && videoIndex < videoIds.length) {
                 const videoId = videoIds[videoIndex];
                 const manifestUrl = `/api/manifest/${videoId}`;
                 console.log(`Loading video from manifest: ${manifestUrl}`);
-                player.attachSource(manifestUrl);
-                window.history.pushState(null, '', `/play/${videoId}`);  // Change URL without page reload
-                document.getElementById('videoTitle').textContent = `Playing Video: ${videoId}`;
-            } else {
-                console.error('No video available at index', videoIndex);
-            }
-        }
+                
+                // Attach source to the current video player
+                players[videoIndex].attachSource(manifestUrl);
 
-        // Fetch a new video ID from the backend
-        async function fetchNewVideo() {
-            if (isFetching || reachedEnd) return;
-
-            try {
-                isFetching = true;  // Prevent further fetch while the current one is in progress
-                const response = await fetch('/api/videos', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ count: 1 }),  // Fetch one new video at a time
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Error fetching video: ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                if (data.videos && data.videos.length > 0) {
-                    videoIds.push(...data.videos.map(video => video.id));
-                    console.log('Fetched new video:', data.videos);
+                // Show the current video player
+                const videoElement = document.getElementById(`videoPlayer${videoIndex + 1}`);
+                if (videoElement) {
+                    videoElement.style.display = 'block';
                 } else {
-                    console.log('No more videos to load.');
-                    reachedEnd = true;  // Set flag indicating no more videos
+                    console.error('Video element not found:', `videoPlayer${videoIndex + 1}`);
                 }
-            } catch (error) {
-                console.error('Failed to fetch new video:', error);
-            } finally {
-                isFetching = false;
+
+                window.history.pushState(null, '', `/play/${videoId}`);
+                document.getElementById('videoTitle').textContent = `Playing Video: ${videoId}`;
+                
+                // Reset like/dislike buttons
+                document.querySelector('.likeBtn').textContent = 'Like';
+                document.querySelector('.dislikeBtn').textContent = 'Dislike';
+                
+                // Hide other players
+                for (let i = 0; i < players.length; i++) {
+                    if (i !== videoIndex) {
+                        const otherVideoElement = document.getElementById(`videoPlayer${i + 1}`);
+                        if (otherVideoElement) {
+                            otherVideoElement.style.display = 'none';
+                        }
+                    }
+                }
+
+                // Preload the next video if available
+                preloadNextVideo(videoIndex);
+            } else {
+                console.error('Invalid video index:', videoIndex);
             }
         }
 
-        // Scroll event listener for switching videos
+        // Preload the next video
+        function preloadNextVideo(currentIndex) {
+            const nextIndex = currentIndex + 1;
+            if (nextIndex < players.length) {
+                const nextVideoId = videoIds[nextIndex];
+                const nextVideoUrl = `/api/manifest/${nextVideoId}`;
+                players[nextIndex].attachSource(nextVideoUrl);
+                players[nextIndex].getVideoElement().load();  // Start buffering the next video
+                console.log(`Preloading next video: ${nextVideoId}`);
+            }
+        }
+
+        // Handle scroll events to load previous/next video
         window.addEventListener('wheel', async (event) => {
             event.preventDefault();
-            if (event.deltaY < 0 && currentVideoIndex > 0) {
+            
+            const scrollSensitivity = 0.1;
+            const adjustedDeltaY = event.deltaY * scrollSensitivity;
+
+            if (adjustedDeltaY < 0 && currentVideoIndex > 0) {
                 // Scroll up: Load previous video
                 currentVideoIndex--;
                 loadVideo(currentVideoIndex);
-            } else if (event.deltaY > 0) {
-                // Scroll down: If at the end, fetch more videos if needed
-                if (currentVideoIndex === videoIds.length - 1) {
-                    await fetchNewVideo();
+            } else if (adjustedDeltaY > 0) {
+                // Scroll down: Load next video
+                if (currentVideoIndex >= videoIds.length - 3) {
+                    await fetchNewVideos();
                 }
+
                 if (currentVideoIndex < videoIds.length - 1) {
                     currentVideoIndex++;
                     loadVideo(currentVideoIndex);
                 }
             }
-        }, { passive: false });  // Set passive: false to allow preventDefault
+        }, { passive: false });
 
         // Play/Pause functionality
-        playPauseBtn.addEventListener('click', () => {
-            if (videoElement.paused) {
-                videoElement.play();
-                playPauseBtn.textContent = 'Pause';
+        document.getElementById('playPauseBtn').addEventListener('click', () => {
+            const currentPlayer = players[currentVideoIndex].getVideoElement();
+            if (currentPlayer.paused) {
+                currentPlayer.play();
+                document.getElementById('playPauseBtn').textContent = 'Pause';
             } else {
-                videoElement.pause();
-                playPauseBtn.textContent = 'Play';
+                currentPlayer.pause();
+                document.getElementById('playPauseBtn').textContent = 'Play';
             }
         });
 
-        // Load the initial video
-        async function initializePlayer() {
-            await fetchNewVideo();  // Fetch the first video
-            if (videoIds.length > 0) {
-                loadVideo(currentVideoIndex);
+        // Like/Dislike functionality
+        document.querySelector('.likeBtn').addEventListener('click', async () => {
+            const videoId = videoIds[currentVideoIndex];
+            await sendLikeDislikeRequest(videoId, true);  // true for like
+            document.querySelector('.likeBtn').textContent = 'Liked';
+            document.querySelector('.dislikeBtn').textContent = 'Dislike';  // Reset dislike button
+        });
+
+        document.querySelector('.dislikeBtn').addEventListener('click', async () => {
+            const videoId = videoIds[currentVideoIndex];
+            await sendLikeDislikeRequest(videoId, false);  // false for dislike
+            document.querySelector('.dislikeBtn').textContent = 'Disliked';
+            document.querySelector('.likeBtn').textContent = 'Like';  // Reset like button
+        });
+
+        // Send like/dislike request to the backend
+        async function sendLikeDislikeRequest(videoId, value) {
+            try {
+                const response = await fetch('/api/like', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ id: videoId, value }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Error submitting like/dislike');
+                }
+
+                console.log('Like/Dislike submitted:', value ? 'Liked' : 'Disliked');
+            } catch (error) {
+                console.error('Failed to submit like/dislike:', error);
             }
         }
 
-        initializePlayer();
+        // Fetch new videos if the user reaches the end
+        async function fetchNewVideos() {
+            if (isFetching || reachedEnd) return;
+
+            try {
+                isFetching = true;
+                const response = await fetch('/api/videos', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ count: 5 }),  // Fetch 5 new videos at once
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error fetching videos: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (data.videos && data.videos.length > 0) {
+                    const newVideoIds = data.videos.map(video => video.id);
+                    const startingIndex = videoIds.length;
+                    videoIds.push(...newVideoIds);
+                    console.log('Fetched new videos:', data.videos);
+
+                    // Create new video players for each new video
+                    newVideoIds.forEach((videoId, index) => {
+                        const overallIndex = startingIndex + index;
+
+                        const newVideoElement = document.createElement('video');
+                        newVideoElement.classList.add('video-js', 'vjs-default-skin');
+                        newVideoElement.setAttribute('controls', '');
+                        newVideoElement.setAttribute('id', `videoPlayer${overallIndex + 1}`); // Use +1 here
+                        newVideoElement.style.display = 'none';  // Hidden upon creation
+
+                        document.getElementById('video-container').appendChild(newVideoElement);
+
+                        // Create new player for the new video
+                        const newPlayer = dashjs.MediaPlayer().create();
+                        newPlayer.initialize(newVideoElement, '', false);
+                        players.push(newPlayer);
+                    });
+                } else {
+                    reachedEnd = true;
+                    console.log('No more videos to load');
+                }
+            } catch (error) {
+                console.error('Failed to fetch new videos:', error);
+            } finally {
+                isFetching = false;
+            }
+        }
+
+        // Initialize the first video player
+        loadVideo(currentVideoIndex);
     </script>
 </body>
 </html>
