@@ -1,427 +1,74 @@
-<!-- <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video List</title>
-    <style>
-        /* Add some basic styles */
-        #video-list {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .video-item {
-            margin: 10px 0;
-            text-align: center;
-            width: 80%;
-        }
-        .video-item img {
-            width: 80%; /* Set thumbnail width */
-            height: auto;
-        }
-    </style>
-</head>
-<body>
-    <h1>Video List</h1>
-    <div id="video-list"></div>
-    <script>
-        let currentPage = 0;
-        const pageSize = 10; // Number of videos to fetch per request
-
-        async function fetchVideos(page) {
-            const response = await fetch("/api/videos", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ count: 10 }), // Load a larger number initially for randomness
-            });
-            const data = await response.json();
-
-            if (data.status === 'OK') {
-                const videoList = document.getElementById('video-list');
-                data.videos.forEach(video => {
-                    const videoElement = document.createElement('div');
-                    videoElement.className = 'video-item';
-                    videoElement.innerHTML = `
-                        <h3>${video.title}</h3>
-                        <img src= "/api/thumbnail/${video.id}" alt="${video.title}" />
-                        <p>${video.description}</p>
-                        <a href="/play/${video.id}">Watch Video</a>
-                    `;
-                    videoList.appendChild(videoElement);
-                });
-            }
-        }
-
-        async function handleScroll() {
-            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight) {
-                currentPage++;
-                await fetchVideos(currentPage);
-            }
-        }
-
-        window.addEventListener('scroll', handleScroll);
-        fetchVideos(currentPage); // Initial fetch
-    </script>
-</body>
-</html> -->
-
-
-<!-- <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video List</title>
-    <style>
-        /* Basic Styles */
-        body, html {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            overflow: hidden; /* Prevent default scrolling */
-            font-family: Arial, sans-serif;
-        }
-        h1 {
-            text-align: center;
-            position: fixed;
-            top: 10px;
-            width: 100%;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.8);
-            margin: 0;
-            padding: 10px 0;
-        }
-        #video-list {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding-top: 60px; /* Space for the fixed header */
-            height: 100vh;
-            overflow-y: scroll;
-            scroll-behavior: smooth; /* Smooth scrolling */
-        }
-        .video-item {
-            margin: 10px 0;
-            text-align: center;
-            width: 80%;
-            padding: 20px;
-            box-sizing: border-box;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            background-color: #f9f9f9;
-        }
-        .video-item img {
-            width: 80%; /* Thumbnail width */
-            height: auto;
-            max-height: 300px; /* Prevent excessive height */
-            border-radius: 4px;
-        }
-        .video-item h3 {
-            margin: 10px 0 5px 0;
-        }
-        .video-item p {
-            margin: 5px 0 10px 0;
-            color: #555;
-        }
-        .video-item a {
-            display: inline-block;
-            padding: 8px 16px;
-            background-color: #007BFF;
-            color: #fff;
-            text-decoration: none;
-            border-radius: 4px;
-        }
-        .video-item a:hover {
-            background-color: #0056b3;
-        }
-    </style>
-</head>
-<body>
-    <h1>Video List</h1>
-    <div id="video-list"></div>
-    <script>
-        let currentPage = 0;
-        const pageSize = 10; // Number of videos to fetch per request
-        const videoElements = []; // To keep track of all video elements for observation
-        let currentVideoId = ''; // Track the current video ID to avoid redundant URL updates
-        let isFetching = false; // Prevent multiple fetches at the same time
-
-        /**
-         * Function to update the URL without reloading the page.
-         * @param {string} videoId - The unique identifier of the video.
-         */
-        function updateURL(videoId) {
-            if (currentVideoId === videoId) return; // Prevent redundant updates
-            currentVideoId = videoId;
-            let strippedUrl = currentVideoId.replace(/\.mp4$/, "");
-            const newURL = `${window.location.origin}/play/${encodeURIComponent(strippedUrl)}`;
-            // Use history.replaceState to avoid adding to the browser history
-            history.replaceState(null, '', newURL);
-        }
-
-        /**
-         * Function to handle intersection changes.
-         * Updates the URL when a video item becomes sufficiently visible.
-         * @param {IntersectionObserverEntry[]} entries 
-         * @param {IntersectionObserver} observer 
-         */
-        function handleIntersection(entries, observer) {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const videoId = entry.target.getAttribute('data-videoid');
-                    if (videoId) {
-                        updateURL(videoId);
-                    }
-                }
-            });
-        }
-
-        // Create an IntersectionObserver instance
-        const observerOptions = {
-            root: document.getElementById('video-list'), // Scroll container
-            rootMargin: '0px',
-            threshold: 0.5 // 50% of the video item is visible
-        };
-        const observer = new IntersectionObserver(handleIntersection, observerOptions);
-
-        /**
-         * Fetches videos from the API and appends them to the video list.
-         * @param {number} page - The current page number for pagination.
-         */
-        async function fetchVideos(page) {
-            if (isFetching) return; // Prevent multiple fetches
-            isFetching = true;
-            try {
-                const response = await fetch("/api/videos", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({ count: pageSize }), // Load 'pageSize' number of videos
-                });
-                const data = await response.json();
-
-                if (data.status === 'OK') {
-                    const videoList = document.getElementById('video-list');
-                    data.videos.forEach(video => {
-                        // Ensure the video ID does not contain file extensions
-                        const sanitizedVideoId = video.id.replace(/\.[^/.]+$/, ""); // Remove any file extension
-                        const sanitizedTitle = video.title.replace(/\.[^/.]+$/, ""); // Remove file extension from title if present
-
-                        const videoElement = document.createElement('div');
-                        videoElement.className = 'video-item';
-                        videoElement.setAttribute('data-videoid', sanitizedVideoId); // Set data attribute for video ID
-                        videoElement.innerHTML = `
-                            <h3>${sanitizedTitle}</h3>
-                            <img src="/api/thumbnail/${sanitizedVideoId}" alt="${sanitizedTitle}" />
-                            <p>${video.description}</p>
-                            <a href="/play/${sanitizedVideoId}">Watch Video</a>
-                        `;
-                        videoList.appendChild(videoElement);
-                        videoElements.push(videoElement);
-                        observer.observe(videoElement); // Start observing the video element
-                    });
-                }
-            } catch (error) {
-                console.error('Error fetching videos:', error);
-            } finally {
-                isFetching = false;
-            }
-        }
-
-        /**
-         * Handles the scroll event to implement infinite scrolling.
-         * Fetches more videos when nearing the bottom of the list.
-         */
-        async function handleScroll() {
-            const videoList = document.getElementById('video-list');
-            if (videoList.scrollTop + videoList.clientHeight >= videoList.scrollHeight - 100) { // Trigger before reaching the bottom
-                currentPage++;
-                await fetchVideos(currentPage);
-            }
-        }
-
-        /**
-         * Scrolls to a specific video based on the URL.
-         * @param {string} videoId - The unique identifier of the video.
-         */
-        function scrollToVideo(videoId) {
-            const targetVideo = videoElements.find(vid => vid.getAttribute('data-videoid') === videoId);
-            if (targetVideo) {
-                targetVideo.scrollIntoView({ behavior: 'smooth' });
-            }
-        }
-
-        /**
-         * Handles the initial URL load.
-         * If the URL contains a video ID, scroll to that video.
-         */
-        window.addEventListener('DOMContentLoaded', () => {
-            const path = decodeURIComponent(window.location.pathname);
-            const playPrefix = '/play/';
-            if (path.startsWith(playPrefix)) {
-                const videoId = path.slice(playPrefix.length);
-                // Scroll to the video after a short delay to ensure videos are loaded
-                setTimeout(() => {
-                    scrollToVideo(videoId);
-                }, 1000); // Adjust the delay as necessary
-            }
-        });
-
-        // Listen to scroll events on the video list container
-        document.getElementById('video-list').addEventListener('scroll', handleScroll);
-
-        // Initial fetch
-        fetchVideos(currentPage);
-    </script>
-</body>
-</html> -->
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video List</title>
     <style>
-        /* Add some basic styles */
         body, html {
             margin: 0;
             padding: 0;
-            height: 100%;
-            overflow: hidden; /* Prevent default scrolling */
         }
         #video-list {
             display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh; /* Full viewport height */
-            overflow-y: scroll;
-            scroll-snap-type: y mandatory; /* Enable vertical snap */
-            -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-        }
-        .video-item {
-            scroll-snap-align: start; /* Snap to start of each item */
-            margin: 0;
-            text-align: center;
-            width: 100%; /* Full width */
-            height: 100vh; /* Full viewport height */
-            display: flex;
-            flex-direction: column;
+            flex-wrap: wrap;
             justify-content: center;
-            box-sizing: border-box;
             padding: 20px;
         }
+        .video-item {
+            margin: 10px;
+            text-align: center;
+            width: 200px;
+        }
         .video-item img {
-            width: 80%; /* Set thumbnail width */
+            width: 100%;
             height: auto;
-            max-height: 60%; /* Prevent image from exceeding viewport */
         }
     </style>
 </head>
 <body>
-    <h1 style="text-align:center; position: fixed; top: 10px; width: 100%; z-index: 1000;">Video List</h1>
+    <h1 style="text-align:center;">Video List</h1>
     <div id="video-list"></div>
     <script>
+        const pageSize = 10; // Number of videos to fetch
         let currentPage = 0;
-        const pageSize = 10; // Number of videos to fetch per request
-        const videoElements = []; // To keep track of all video elements for observation
-        let currentVideoName = ''; // Track the current video name to avoid redundant URL updates
-        let isFetching = false; // Prevent multiple fetches at the same time
 
-        // Function to update the URL without reloading the page
-        function updateURL(videoName) {
-            if (currentVideoName === videoName) return; // Prevent redundant updates
-            currentVideoName = videoName;
-            const newURL = `${window.location.origin}/${encodeURIComponent(videoName)}`;
-            // Use history.replaceState to avoid adding to the browser history
-            history.replaceState(null, '', newURL);
-        }
-
-        // Function to handle intersection changes
-        function handleIntersection(entries, observer) {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const videoName = entry.target.getAttribute('data-videoname');
-                    if (videoName) {
-                        updateURL(videoName);
-                    }
-                }
-            });
-        }
-
-        // Create an IntersectionObserver instance
-        const observerOptions = {
-            root: document.getElementById('video-list'), // Scroll container
-            rootMargin: '0px',
-            threshold: 0.6 // 60% of the video item is visible
-        };
-        const observer = new IntersectionObserver(handleIntersection, observerOptions);
-
-        async function fetchVideos(page) {
-            if (isFetching) return; // Prevent multiple fetches
-            isFetching = true;
+        async function fetchVideos() {
             try {
-                const response = await fetch("/api/videos", {
-                    method: "POST",
+                const response = await fetch(`/videos?count=${pageSize}&page=${currentPage}`, {
+                    method: "GET",
                     headers: {
                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({ count: pageSize }), // Load 'pageSize' number of videos
+                    }
                 });
                 const data = await response.json();
-
                 if (data.status === 'OK') {
                     const videoList = document.getElementById('video-list');
                     data.videos.forEach(video => {
                         const videoElement = document.createElement('div');
                         videoElement.className = 'video-item';
-                        videoElement.setAttribute('data-videoname', video.title); // Set data attribute for video name
                         videoElement.innerHTML = `
-                            <h3>${video.title}</h3>
-                            <img src="/api/thumbnail/${video.id}" alt="${video.title}" />
+                            <a href="/play/${video.id}">
+                                <img src="${video.thumbnail}" alt="${video.id}" />
+                            </a>
+                            <h3>${video.id}</h3>
                             <p>${video.description}</p>
-                            <a href="/play/${video.id}">Watch Video</a>
                         `;
                         videoList.appendChild(videoElement);
-                        videoElements.push(videoElement);
-                        observer.observe(videoElement); // Start observing the video element
                     });
+                    currentPage++;
+                } else {
+                    console.error("Error fetching videos:", data.message);
                 }
             } catch (error) {
                 console.error('Error fetching videos:', error);
-            } finally {
-                isFetching = false;
             }
         }
 
-        async function handleScroll() {
-            const videoList = document.getElementById('video-list');
-            if (videoList.scrollTop + videoList.clientHeight >= videoList.scrollHeight - 100) { // Trigger before reaching the bottom
-                currentPage++;
-                await fetchVideos(currentPage);
-            }
-        }
-
-        // Listen to scroll events on the video list container
-        document.getElementById('video-list').addEventListener('scroll', handleScroll);
-        fetchVideos(currentPage); // Initial fetch
-
-        // Optional: Handle initial URL if it contains a videoname
-        window.addEventListener('DOMContentLoaded', () => {
-            const path = decodeURIComponent(window.location.pathname);
-            if (path && path !== '/') {
-                const videoName = path.substring(1); // Remove the leading '/'
-                // Scroll to the video with the matching videoname
-                const targetVideo = videoElements.find(vid => vid.getAttribute('data-videoname') === videoName);
-                if (targetVideo) {
-                    targetVideo.scrollIntoView({ behavior: 'smooth' });
-                }
-            }
-        });
+        fetchVideos(); // Fetch the initial 10 videos
     </script>
 </body>
 </html>
+
+
+
+

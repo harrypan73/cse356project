@@ -9,6 +9,7 @@ const fs = require('fs');
 const multer = require('multer');
 const subprocess = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
+const axios = require('axios');
 
 const PORT = 80;
 
@@ -357,61 +358,230 @@ app.get('/api/like_state/:id', isAuthenticated, async (req, res) => {
     }
 });
 
+// Collaborative Filtering Helper Functions
+async function getUserRatings(username) {
+    const likedVideos = await Video.find({ 'likes.userId': username });
+    const ratings = {};
+    likedVideos.forEach(video => {
+        const likeEntry = video.likes.find(like => like.userId === username);
+        if (likeEntry) {
+            ratings[video.id] = likeEntry.value ? 1 : -1; // Map true to +1, false to -1
+        }
+    });
+    return ratings;
+}
 
+async function getUserViews(username) {
+    const viewedVideos = await Video.find({ 'views.userId': username });
+    return viewedVideos.map(video => video.id);
+}
+
+function computeCosineSimilarity(ratingsA, ratingsB) {
+    const commonVideos = Object.keys(ratingsA).filter(videoId => videoId in ratingsB);
+
+    if (commonVideos.length === 0) return 0;
+
+    let dotProduct = 0;
+    let magnitudeA = 0;
+    let magnitudeB = 0;
+
+    commonVideos.forEach(videoId => {
+        const ratingA = ratingsA[videoId];
+        const ratingB = ratingsB[videoId];
+        dotProduct += ratingA * ratingB;
+        magnitudeA += ratingA * ratingA;
+        magnitudeB += ratingB * ratingB;
+    });
+
+    magnitudeA = Math.sqrt(magnitudeA);
+    magnitudeB = Math.sqrt(magnitudeB);
+
+    if (magnitudeA === 0 || magnitudeB === 0) return 0;
+
+    return dotProduct / (magnitudeA * magnitudeB);
+}
+
+async function predictRatings(activeUserRatings, topUsers) {
+    const predictedRatings = {};
+
+    for (const { username, similarity } of topUsers) {
+        const userRatings = await getUserRatings(username);
+
+        for (const [videoId, rating] of Object.entries(userRatings)) {
+            if (!(videoId in activeUserRatings)) {
+                if (!(videoId in predictedRatings)) {
+                    predictedRatings[videoId] = { weightedSum: 0, sumOfWeights: 0 };
+                }
+                predictedRatings[videoId].weightedSum += similarity * rating;
+                predictedRatings[videoId].sumOfWeights += Math.abs(similarity);
+            }
+        }
+    }
+
+    for (const videoId in predictedRatings) {
+        const { weightedSum, sumOfWeights } = predictedRatings[videoId];
+        predictedRatings[videoId] = sumOfWeights !== 0 ? (weightedSum / sumOfWeights) : 0;
+    }
+
+    return predictedRatings;
+}
+
+async function selectTopVideos(predictedRatings, activeUserRatings, activeUserViews, count) {
+    const videoIds = Object.keys(predictedRatings);
+
+    // Exclude videos the user has already viewed
+    const unviewedVideoIds = videoIds.filter(videoId => !activeUserViews.includes(videoId));
+
+    // Sort the unviewed videos based on predicted ratings
+    unviewedVideoIds.sort((a, b) => predictedRatings[b] - predictedRatings[a]);
+
+    let recommendedVideoIds = unviewedVideoIds.slice(0, count);
+
+    // If not enough videos, fill with random unwatched videos
+    if (recommendedVideoIds.length < count) {
+        const needed = count - recommendedVideoIds.length;
+        const additionalVideos = await Video.find({
+            id: { $nin: [...recommendedVideoIds, ...activeUserViews] },
+            processingStatus: 'complete'
+        }).limit(needed);
+
+        recommendedVideoIds = recommendedVideoIds.concat(additionalVideos.map(video => video.id));
+    }
+
+    // If still not enough, fill with random videos, including watched ones
+    if (recommendedVideoIds.length < count) {
+        const needed = count - recommendedVideoIds.length;
+        const additionalVideos = await Video.find({
+            id: { $nin: recommendedVideoIds },
+            processingStatus: 'complete'
+        }).limit(needed);
+
+        recommendedVideoIds = recommendedVideoIds.concat(additionalVideos.map(video => video.id));
+    }
+
+    // Limit to requested count
+    recommendedVideoIds = recommendedVideoIds.slice(0, count);
+
+    return recommendedVideoIds;
+}
+
+async function formatVideosResponse(videoIds, activeUsername) {
+    const videos = await Video.find({ id: { $in: videoIds } });
+
+    return videos.map(video => {
+        const userLikeEntry = video.likes.find(like => like.userId === activeUsername);
+        const liked = userLikeEntry ? (userLikeEntry.value === true ? true : false) : null;
+        const watched = video.views.some(view => view.userId === activeUsername);
+
+        return {
+            id: video.id,
+            description: '', // Adjust if you have a description field
+            title: video.title,
+            watched,
+            liked,
+            likevalues: video.likes.filter(like => like.value === true).length,
+        };
+    });
+}
+
+// The modified /api/videos endpoint
 app.post('/api/videos', isAuthenticated, async (req, res) => {
-    const {count} = req.body;
+    const { count } = req.body;
+    const activeUsername = req.session.username;
+    const N = 5;
 
-	if (!count) {
-		return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
-	}
+    if (!count) {
+        return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
+    }
 
-	const start = 0;
+    try {
+        const activeUserRatings = await getUserRatings(activeUsername);
+        const activeUserViews = await getUserViews(activeUsername);
 
-	try {
-		const files = fs.readdirSync(videosDir);
+        const otherUsers = await User.find({ username: { $ne: activeUsername } });
 
-		const videoFiles = files.filter((file) => {
-			const extension = path.extname(file).toLowerCase();
-			return extension === '.mp4';
-		});
+        const similarities = [];
+        for (const user of otherUsers) {
+            const otherUserRatings = await getUserRatings(user.username);
+            const similarity = computeCosineSimilarity(activeUserRatings, otherUserRatings);
+            if (similarity > 0) {
+                similarities.push({ username: user.username, similarity });
+            }
+        }
 
-		const videos = videoFiles.map((file) => {
-			const title = file;
-			const description = videoMetadata[title];
+        similarities.sort((a, b) => b.similarity - a.similarity);
+        const topUsers = similarities.slice(0, N);
 
-			return { id: title.replace(/\.mp4$/, ""), title: title, description: description };
-		});
+        const predictedRatings = await predictRatings(activeUserRatings, topUsers);
+        const recommendedVideoIds = await selectTopVideos(predictedRatings, activeUserRatings, activeUserViews, count);
+        const responseVideos = await formatVideosResponse(recommendedVideoIds, activeUsername);
 
-		const selectedVideos = videos.slice(start, start + count);
-
-		return res.status(200).json({ status: 'OK', videos: selectedVideos });
-	} catch(e) {
-		return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
-	}
-    // try {
-    //   const count = parseInt(req.body.count) || 5;
-    //   const offset = parseInt(req.body.offset) || 0;
-    //   const excludeIds = req.body.excludeIds || [];
-  
-    //   const videosQuery = Video.find();
-  
-    //   if (excludeIds.length > 0) {
-    //     videosQuery.where('id').nin(excludeIds).where('_id').nin(excludeIds);
-    //   }
-  
-    //   const videos = await videosQuery.skip(offset).limit(count).exec();
-  
-    //   // Ensure that 'id' is always present
-    //   const videoList = videos.map(video => ({
-    //     id: video.id || video._id.toString(),
-    //   }));
-  
-    //   res.status(200).json({ status: "OK", videos: videoList });
-    // } catch (error) {
-    //   console.error("Error fetching videos:", error);
-    //   res.status(200).json({ status: "ERROR", message: error.message });
-    // }
+        return res.status(200).json({ status: 'OK', videos: responseVideos });
+    } catch (e) {
+        console.error("Error in /api/videos:", e);
+        return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+    }
 });
+
+// ... (rest of your code)
+
+
+
+
+// app.post('/api/videos', isAuthenticated, async (req, res) => {
+//     const {count} = req.body;
+
+// 	if (!count) {
+// 		return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
+// 	}
+
+// 	const start = 0;
+
+// 	try {
+// 		const files = fs.readdirSync(videosDir);
+
+// 		const videoFiles = files.filter((file) => {
+// 			const extension = path.extname(file).toLowerCase();
+// 			return extension === '.mp4';
+// 		});
+
+// 		const videos = videoFiles.map((file) => {
+// 			const title = file;
+// 			const description = videoMetadata[title];
+
+// 			return { id: title.replace(/\.mp4$/, ""), title: title, description: description };
+// 		});
+
+// 		const selectedVideos = videos.slice(start, start + count);
+
+// 		return res.status(200).json({ status: 'OK', videos: selectedVideos });
+// 	} catch(e) {
+// 		return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+// 	}
+//     // try {
+//     //   const count = parseInt(req.body.count) || 5;
+//     //   const offset = parseInt(req.body.offset) || 0;
+//     //   const excludeIds = req.body.excludeIds || [];
+  
+//     //   const videosQuery = Video.find();
+  
+//     //   if (excludeIds.length > 0) {
+//     //     videosQuery.where('id').nin(excludeIds).where('_id').nin(excludeIds);
+//     //   }
+  
+//     //   const videos = await videosQuery.skip(offset).limit(count).exec();
+  
+//     //   // Ensure that 'id' is always present
+//     //   const videoList = videos.map(video => ({
+//     //     id: video.id || video._id.toString(),
+//     //   }));
+  
+//     //   res.status(200).json({ status: "OK", videos: videoList });
+//     // } catch (error) {
+//     //   console.error("Error fetching videos:", error);
+//     //   res.status(200).json({ status: "ERROR", message: error.message });
+//     // }
+// });
   
 
 
@@ -449,7 +619,19 @@ app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
 
 		await video.save();
 
-		// Create chunks and manifest
+        // 1. Generate thumbnail (store it in the 'thumbnails' folder)
+        const thumbnailPath = path.join(__dirname, 'thumbnails', `${video.id}_thumbnail.jpg`);
+
+        // Generate the thumbnail using ffmpeg (same logic as the shell script)
+        const generateThumbnailCommand = [
+            'ffmpeg', '-i', videoPath,
+            '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
+            '-frames:v', '1', thumbnailPath, '-y'
+        ];
+
+        // Execute the ffmpeg command to create the thumbnail
+        subprocess.spawn(generateThumbnailCommand[0], generateThumbnailCommand.slice(1));		// Create chunks and manifest
+        
         const outputFile = path.join(__dirname, 'media', `${video.id}.mpd`);
         
         // Ensure the media directory exists
@@ -480,10 +662,10 @@ app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
 
         // Capture stderr and stdout to log errors
         ffmpegProcess.stderr.on('data', (data) => {
-        console.error(`FFmpeg Error: ${data.toString()}`);
+        // console.error(`FFmpeg Error: ${data.toString()}`);
         });
         ffmpegProcess.stdout.on('data', (data) => {
-        console.log(`FFmpeg Output: ${data.toString()}`);
+        // console.log(`FFmpeg Output: ${data.toString()}`);
         });
 
         // Listen for FFmpeg's completion
@@ -710,7 +892,6 @@ const generateThumbnail = (videoPath, thumbnailPath) => {
 
 app.get('/api/thumbnail/:id', async (req, res) => {
     const videoId = req.params.id;
-    console.log("SEARCHING THUMBNAILS");
     const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}_thumbnail.jpg`);
     
     // Check if user is logged in
@@ -735,27 +916,50 @@ app.get('/videos', isAuthenticated, async (req, res) => {
         const count = parseInt(req.query.count) || 10;
         const page = parseInt(req.query.page) || 0;
 
+        // Fetch the list of video files (e.g., from the file system)
         const files = fs.readdirSync(videosDir);
         const videoFiles = files.filter(file => path.extname(file).toLowerCase() === '.mp4');
 
+        // Get the starting index based on pagination
         const startIndex = page * count;
         const selectedVideoFiles = videoFiles.slice(startIndex, startIndex + count);
 
-        const videos = selectedVideoFiles.map(file => {
-            const title = path.basename(file, '.mp4');
-            return {
-                id: title,
-                thumbnail: `api/thumbnail/${title}`,
-                description: `Description for ${title}`
-            };
-        });
+        // Fetch videos from the database and filter based on whether the user has viewed them
+        const videos = await Promise.all(
+            selectedVideoFiles.map(async (file) => {
+                const title = path.basename(file, '.mp4');
 
-        res.status(200).json({ status: "OK", videos });
+                // Find the video in the database by its title/id
+                const video = await Video.findOne({ id: title });
+
+                // If the video exists, check if the user has already viewed it
+                if (video) {
+                    const userHasViewed = video.views.some(view => view.userId === req.session.username);
+                    
+                    // If the user hasn't viewed this video, return it; otherwise, skip it
+                    // if (!userHasViewed) {
+                        return {
+                            id: title,
+                            thumbnail: `api/thumbnail/${title}`,
+                            description: `Description for ${title}`,
+                        };
+                    // }
+                }
+                return null; // If video doesn't exist or user has viewed, return null
+            })
+        );
+
+        // Filter out null values (videos that the user has already viewed or that don't exist)
+        const filteredVideos = videos.filter(video => video !== null);
+
+        // Return the filtered list of videos
+        res.status(200).json({ status: "OK", videos: filteredVideos });
     } catch (error) {
         console.error("Error fetching videos:", error);
         res.status(200).json({ status: "ERROR", message: error.message });
     }
 });
+
 app.get('/media/:filename', isAuthenticated, (req, res) => {
   
 	const { filename } = req.params;
@@ -906,9 +1110,15 @@ app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
 
   
 
-app.get('/play/:id', isAuthenticated, (req, res) => {
+app.get('/play/:id', isAuthenticated, async (req, res) => {
 	const videoId = req.params.id;
 	console.log("ID : ", videoId);
+
+    // View video
+    await axios.post('http://130.245.136.205/api/view', { id: videoId }, {
+        headers: { 'Cookie': req.headers.cookie } // Ensure the session cookie is sent
+    });
+
     // Path to the static HTML template
     const templatePath = path.join(__dirname, 'templates', 'mediaplayer.html');
         
