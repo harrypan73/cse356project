@@ -11,7 +11,39 @@ const subprocess = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const axios = require('axios');
 
-const PORT = 80;
+const PORT = 3000;
+
+const https = require('https');
+
+// // Load SSL certificate and key
+// let sslOptions;
+// try {
+//   sslOptions = {
+//     key: fs.readFileSync('/etc/letsencrypt/live/chickenpotpie.cse356.compas.cs.stonybrook.edu/privkey.pem'),
+//     cert: fs.readFileSync('/etc/letsencrypt/live/chickenpotpie.cse356.compas.cs.stonybrook.edu/fullchain.pem'),
+//   };
+//   console.log('SSL certificates loaded successfully.');
+// } catch (error) {
+//   console.error('Error loading SSL certificates:', error);
+//   process.exit(1); // Exit if SSL certificates cannot be loaded
+// }
+
+// // Redirect HTTP to HTTPS
+// const http = require('http');
+// http.createServer((req, res) => {
+//   res.writeHead(301, { 'Location': 'https://' + req.headers['host'] + req.url });
+//   res.end();
+// }).listen(80, () => {
+//   console.log('HTTP Server running on port 80 (redirecting to HTTPS)');
+// });
+
+// // Start HTTPS server
+// https.createServer(sslOptions, app).listen(3000, () => {
+//   console.log('HTTPS Server running on port 3000');
+// }).on('error', (err) => {
+//   console.error('Failed to start HTTPS server:', err);
+// });
+app.set('trust proxy', 1);
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -52,14 +84,15 @@ app.use(
 	})
 );
 
+
 // Logging middleware
-app.use((req, res, next) => {
-	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-	console.log(`Headers:`, req.headers);
-	console.log(`Body:`, req.body);
-	console.log(`Session:`, req.session);
-	next();
-});
+// app.use((req, res, next) => {
+// 	console.log([${new Date().toISOString()}] ${req.method} ${req.originalUrl});
+// 	console.log(Headers:, req.headers);
+// 	console.log(Body:, req.body);
+// 	console.log(Session:, req.session);
+// 	next();
+// });
 
 app.use((req, res, next) => {
 	res.setHeader('X-CSE356', '66d1c9697f77bf55c5004757');
@@ -122,18 +155,10 @@ function isAuthenticated(req, res, next) {
 		} else {
 			return res.sendFile(path.join(__dirname, 'templates', 'login.html'));
 		}
-	//   } else {
-	// 	res.status(200).json({
-	// 	  status: 'ERROR',
-	// 	  error: true,
-	// 	  message: 'Unauthorized access. Please log in first.',
-	// 	});
-	//   }
 	}
   }
   
-
-  app.get('/', (req, res) => {
+app.get('/', (req, res) => {
     if (req.session.username) {
         // User is logged in, serve the media player directly
         return res.sendFile(path.join(__dirname, 'templates', 'videos.html'));
@@ -376,7 +401,49 @@ async function getUserViews(username) {
     return viewedVideos.map(video => video.id);
 }
 
-function computeCosineSimilarity(ratingsA, ratingsB) {
+async function isVideoWatchedByUser(userId, videoId) {
+    const video = await Video.findOne({ id: videoId });
+
+    if (!video) {
+        return false; // Video not found
+    }
+
+    // Check if the userId is in the views array of the video
+    return video.views.some(view => view.userId === userId);
+}
+
+
+async function getVideoInteractions(videoId) {
+    const video = await Video.findOne({ id: videoId });
+
+    if (!video) {
+        return {};
+    }
+
+    const interactionVector = {};
+
+    video.likes.forEach(({ userId, value }) => {
+        interactionVector[userId] = value !== null ? (value ? 1 : 0) : null;
+    });
+
+    return interactionVector;
+}
+
+async function getUserVideoLikeStatus(userId, videoId) {
+    const video = await Video.findOne({ id: videoId });
+
+    if (!video) {
+        return null;  // Video not found
+    }
+
+    // Find the like status of the user in the video's likes array
+    const likeStatus = video.likes.find(like => like.userId === userId);
+
+    // If the user has liked the video, return true, else return null
+    return likeStatus ? likeStatus.value : null;
+}
+
+function computeCosineSimilarityRatings(ratingsA, ratingsB) {
     const commonVideos = Object.keys(ratingsA).filter(videoId => videoId in ratingsB);
 
     if (commonVideos.length === 0) return 0;
@@ -400,6 +467,30 @@ function computeCosineSimilarity(ratingsA, ratingsB) {
 
     return dotProduct / (magnitudeA * magnitudeB);
 }
+
+function computeCosineSimilarityInteractions(interactionsA, interactionsB) {
+    const commonUsers = Object.keys(interactionsA).filter(user => interactionsB[user] !== undefined);
+
+    if (commonUsers.length === 0) return 0;
+
+    let dotProduct = 0;
+    let magnitudeA = 0;
+    let magnitudeB = 0;
+
+    for (const user of commonUsers) {
+        const ratingA = interactionsA[user];
+        const ratingB = interactionsB[user];
+        if (ratingA !== null && ratingB !== null) {
+            dotProduct += ratingA * ratingB;
+            magnitudeA += ratingA * ratingA;
+            magnitudeB += ratingB * ratingB;
+        }
+    }
+
+    if (magnitudeA === 0 || magnitudeB === 0) return 0;
+    return dotProduct / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB));
+}
+
 
 async function predictRatings(activeUserRatings, topUsers) {
     const predictedRatings = {};
@@ -475,7 +566,7 @@ async function formatVideosResponse(videoIds, activeUsername) {
 
         return {
             id: video.id,
-            description: '', // Adjust if you have a description field
+            description: video.description, // Adjust if you have a description field
             title: video.title,
             watched,
             liked,
@@ -484,9 +575,8 @@ async function formatVideosResponse(videoIds, activeUsername) {
     });
 }
 
-// The modified /api/videos endpoint
 app.post('/api/videos', isAuthenticated, async (req, res) => {
-    const { count } = req.body;
+    const { videoId, count } = req.body;
     const activeUsername = req.session.username;
     const N = 5;
 
@@ -494,104 +584,93 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
         return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
     }
 
-    try {
-        const activeUserRatings = await getUserRatings(activeUsername);
-        const activeUserViews = await getUserViews(activeUsername);
+    // Find similar videos based on videoId
+    
+    // IMPLEMENT
 
-        const otherUsers = await User.find({ username: { $ne: activeUsername } });
+    if (!videoId) {
+        try {
+            const activeUserRatings = await getUserRatings(activeUsername);
+            const activeUserViews = await getUserViews(activeUsername);
 
-        const similarities = [];
-        for (const user of otherUsers) {
-            const otherUserRatings = await getUserRatings(user.username);
-            const similarity = computeCosineSimilarity(activeUserRatings, otherUserRatings);
-            if (similarity > 0) {
-                similarities.push({ username: user.username, similarity });
+            const otherUsers = await User.find({ username: { $ne: activeUsername } });
+
+            const similarities = [];
+            for (const user of otherUsers) {
+                const otherUserRatings = await getUserRatings(user.username);
+                const similarity = computeCosineSimilarityRatings(activeUserRatings, otherUserRatings);
+                if (similarity > 0) {
+                    similarities.push({ username: user.username, similarity });
+                }
             }
+
+            similarities.sort((a, b) => b.similarity - a.similarity);
+            const topUsers = similarities.slice(0, N);
+
+            const predictedRatings = await predictRatings(activeUserRatings, topUsers);
+            const recommendedVideoIds = await selectTopVideos(predictedRatings, activeUserRatings, activeUserViews, count);
+            const responseVideos = await formatVideosResponse(recommendedVideoIds, activeUsername);
+
+            return res.status(200).json({ status: 'OK', videos: responseVideos });
+        } catch (e) {
+            console.error("Error in /api/videos:", e);
+            return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
         }
-
-        similarities.sort((a, b) => b.similarity - a.similarity);
-        const topUsers = similarities.slice(0, N);
-
-        const predictedRatings = await predictRatings(activeUserRatings, topUsers);
-        const recommendedVideoIds = await selectTopVideos(predictedRatings, activeUserRatings, activeUserViews, count);
-        const responseVideos = await formatVideosResponse(recommendedVideoIds, activeUsername);
-
-        return res.status(200).json({ status: 'OK', videos: responseVideos });
-    } catch (e) {
-        console.error("Error in /api/videos:", e);
-        return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+    } else {
+        try {
+            const videoInteractions = await getVideoInteractions(videoId);
+    
+            // 2. Compute video similarity
+            const videoSimilarities = [];
+            const allVideos = await Video.find(); // Get all videos in the system
+    
+            for (const otherVideo of allVideos) {
+                if (otherVideo._id.toString() !== videoId) {
+                    const otherVideoInteractions = await getVideoInteractions(otherVideo._id);
+                    const similarity = computeCosineSimilarityInteractions(videoInteractions, otherVideoInteractions);
+    
+                    if (similarity > 0) {
+                        videoSimilarities.push({ videoId: otherVideo._id, similarity });
+                    }
+                }
+            }
+    
+            // 3. Sort by similarity and get the top N similar videos
+            videoSimilarities.sort((a, b) => b.similarity - a.similarity);
+            const topSimilarVideos = videoSimilarities.slice(0, N);
+    
+            // 4. Prepare the video data for response
+            const responseVideos = [];
+            for (const { videoId, similarity } of topSimilarVideos) {
+                const video = await Video.findById(videoId);
+                const watched = await isVideoWatchedByUser(activeUsername, videoId);
+                const liked = await getUserVideoLikeStatus(activeUsername, videoId);
+    
+                responseVideos.push({
+                    id: video._id,
+                    description: video.description,
+                    title: video.title,
+                    watched,
+                    liked,
+                    likevalues: similarity
+                });
+            }
+    
+            return res.status(200).json({ status: 'OK', videos: responseVideos });
+    
+        } catch (e) {
+            console.error("Error in /api/videos:", e);
+            return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
+        }    
     }
 });
 
-// ... (rest of your code)
-
-
-
-
-// app.post('/api/videos', isAuthenticated, async (req, res) => {
-//     const {count} = req.body;
-
-// 	if (!count) {
-// 		return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
-// 	}
-
-// 	const start = 0;
-
-// 	try {
-// 		const files = fs.readdirSync(videosDir);
-
-// 		const videoFiles = files.filter((file) => {
-// 			const extension = path.extname(file).toLowerCase();
-// 			return extension === '.mp4';
-// 		});
-
-// 		const videos = videoFiles.map((file) => {
-// 			const title = file;
-// 			const description = videoMetadata[title];
-
-// 			return { id: title.replace(/\.mp4$/, ""), title: title, description: description };
-// 		});
-
-// 		const selectedVideos = videos.slice(start, start + count);
-
-// 		return res.status(200).json({ status: 'OK', videos: selectedVideos });
-// 	} catch(e) {
-// 		return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
-// 	}
-//     // try {
-//     //   const count = parseInt(req.body.count) || 5;
-//     //   const offset = parseInt(req.body.offset) || 0;
-//     //   const excludeIds = req.body.excludeIds || [];
-  
-//     //   const videosQuery = Video.find();
-  
-//     //   if (excludeIds.length > 0) {
-//     //     videosQuery.where('id').nin(excludeIds).where('_id').nin(excludeIds);
-//     //   }
-  
-//     //   const videos = await videosQuery.skip(offset).limit(count).exec();
-  
-//     //   // Ensure that 'id' is always present
-//     //   const videoList = videos.map(video => ({
-//     //     id: video.id || video._id.toString(),
-//     //   }));
-  
-//     //   res.status(200).json({ status: "OK", videos: videoList });
-//     // } catch (error) {
-//     //   console.error("Error fetching videos:", error);
-//     //   res.status(200).json({ status: "ERROR", message: error.message });
-//     // }
-// });
-  
-
-
-
 app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
     const author = req.session.username;
-	const { title } = req.body;
+	const { title, description } = req.body;
 	const mp4File = req.file;
 
-	if (!author || !title || !mp4File) {
+	if (!author || !title || !description || !mp4File) {
 		return res.status(200).json({
 			status: "ERROR", 
 			error: true,
@@ -612,6 +691,7 @@ app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
 			id: title + author + Date.now(),
 			author: author,
 			title: title,
+            description: description,
 			likes: [],
 			views: [],
 			processingStatus: "processing"
@@ -639,20 +719,24 @@ app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
 
         const ffmpegCommand = [
             'ffmpeg', '-i', videoPath,
-            '-map', '0:v', '-b:v:0', '254k', '-s:v:0', '320x180', '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:1', '507k', '-s:v:1', '320x180', '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:2', '759k', '-s:v:2', '480x270', '-vf', 'scale=480:270:force_original_aspect_ratio=decrease,pad=480:270:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:3', '1013k', '-s:v:3', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:4', '1254k', '-s:v:4', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:5', '1883k', '-s:v:5', '768x432', '-vf', 'scale=768:432:force_original_aspect_ratio=decrease,pad=768:432:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:6', '3134k', '-s:v:6', '1024x576', '-vf', 'scale=1024:576:force_original_aspect_ratio=decrease,pad=1024:576:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:7', '4952k', '-s:v:7', '1280x720', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black',
+            '-map', '0:v', '-b:v:0', '512k', '-s:v:0', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
+            '-map', '0:v', '-b:v:1', '768k', '-s:v:1', '960x540', '-vf', 'scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:black',
+            '-map', '0:v', '-b:v:2', '1024k', '-s:v:2', '1280x720', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:0', '254k', '-s:v:0', '320x180', '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:1', '507k', '-s:v:1', '320x180', '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:2', '759k', '-s:v:2', '480x270', '-vf', 'scale=480:270:force_original_aspect_ratio=decrease,pad=480:270:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:3', '1013k', '-s:v:3', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:4', '1254k', '-s:v:4', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:5', '1883k', '-s:v:5', '768x432', '-vf', 'scale=768:432:force_original_aspect_ratio=decrease,pad=768:432:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:6', '3134k', '-s:v:6', '1024x576', '-vf', 'scale=1024:576:force_original_aspect_ratio=decrease,pad=1024:576:(ow-iw)/2:(oh-ih)/2:black',
+            // '-map', '0:v', '-b:v:7', '4952k', '-s:v:7', '1280x720', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black',
             '-use_template', '1', '-use_timeline', '1', '-seg_duration', '10',
             '-init_seg_name', `media/${fileName}_init_\$RepresentationID\$.m4s`,
             '-media_seg_name', `media/${fileName}_chunk_\$Bandwidth\$_\$Number\$.m4s`,
             '-adaptation_sets', 'id=0,streams=v',
             '-f', 'dash', outputFile
-          ];
+        ];
+
         // const ffmpegPath = await exec('which ffmpeg');
         // console.log('FFmpeg Path:', ffmpegPath);
                       
@@ -941,7 +1025,7 @@ app.get('/videos', isAuthenticated, async (req, res) => {
                         return {
                             id: title,
                             thumbnail: `api/thumbnail/${title}`,
-                            description: `Description for ${title}`,
+                            description: video.description,
                         };
                     // }
                 }
@@ -1146,6 +1230,10 @@ app.get('/player', (req, res) => {
 });
 
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
+// app.listen(PORT, '0.0.0.0', () => {
+//     console.log(`Server is running on port ${PORT}`);
+// });
+
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`Server is running on port ${PORT}`);
 });
