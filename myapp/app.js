@@ -61,6 +61,7 @@ const storage = multer.diskStorage({
 
 // Initialize multer with the storage configuration
 const upload = multer({
+    limits: { fileSize: 100 * 1024 * 1024 },  // 100 MB
     storage: storage,
     fileFilter: function (req, file, cb) {
         console.log("Uploaded field:", file.fieldname); // Log field name
@@ -86,13 +87,13 @@ app.use(
 
 
 // Logging middleware
-// app.use((req, res, next) => {
-// 	console.log([${new Date().toISOString()}] ${req.method} ${req.originalUrl});
-// 	console.log(Headers:, req.headers);
-// 	console.log(Body:, req.body);
-// 	console.log(Session:, req.session);
-// 	next();
-// });
+app.use((req, res, next) => {
+	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+	console.log("Headers:", req.headers);
+	console.log("Body:", req.body);
+	console.log("Session:", req.session);
+	next();
+});
 
 app.use((req, res, next) => {
 	res.setHeader('X-CSE356', '66d1c9697f77bf55c5004757');
@@ -205,7 +206,7 @@ app.post('/api/adduser', async (req, res) => {
 		const params = `email=${encodeURIComponent(email)}&key=${encodeURIComponent(key)}`;
 		console.log('Parameters:', params);
 		//const encodedParams = new URLSearchParams(params).toString();
-		const verificationLink = `http://130.245.136.205/api/verify?${params}`;
+		const verificationLink = `https://chickenpotpie.cse356.compas.cs.stonybrook.edu/api/verify?${params}`;
 		console.log(verificationLink);
 
 		const mailOptions = {
@@ -566,7 +567,7 @@ async function formatVideosResponse(videoIds, activeUsername) {
 
         return {
             id: video.id,
-            description: video.description, // Adjust if you have a description field
+            description: video.description,
             title: video.title,
             watched,
             liked,
@@ -625,12 +626,13 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             const allVideos = await Video.find(); // Get all videos in the system
     
             for (const otherVideo of allVideos) {
-                if (otherVideo._id.toString() !== videoId) {
-                    const otherVideoInteractions = await getVideoInteractions(otherVideo._id);
+                if (otherVideo.id.toString() !== videoId) {
+                    const otherVideoInteractions = await getVideoInteractions(otherVideo.id);
+                    console.log(otherVideoInteractions);
                     const similarity = computeCosineSimilarityInteractions(videoInteractions, otherVideoInteractions);
     
                     if (similarity > 0) {
-                        videoSimilarities.push({ videoId: otherVideo._id, similarity });
+                        videoSimilarities.push({ videoId: otherVideo.id, similarity });
                     }
                 }
             }
@@ -647,7 +649,7 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
                 const liked = await getUserVideoLikeStatus(activeUsername, videoId);
     
                 responseVideos.push({
-                    id: video._id,
+                    id: video.id,
                     description: video.description,
                     title: video.title,
                     watched,
@@ -666,9 +668,11 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
 });
 
 app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
+    console.log("CHECKPOINT 1");
     const author = req.session.username;
 	const { title, description } = req.body;
 	const mp4File = req.file;
+    console.log("CHECKPOINT 2");
 
 	if (!author || !title || !description || !mp4File) {
 		return res.status(200).json({
@@ -1199,7 +1203,7 @@ app.get('/play/:id', isAuthenticated, async (req, res) => {
 	console.log("ID : ", videoId);
 
     // View video
-    await axios.post('http://130.245.136.205/api/view', { id: videoId }, {
+    await axios.post('https://chickenpotpie.cse356.compas.cs.stonybrook.edu/api/view', { id: videoId }, {
         headers: { 'Cookie': req.headers.cookie } // Ensure the session cookie is sent
     });
 
@@ -1234,6 +1238,6 @@ app.get('/player', (req, res) => {
 //     console.log(`Server is running on port ${PORT}`);
 // });
 
-app.listen(PORT, '127.0.0.1', () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT}`);
 });
