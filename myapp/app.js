@@ -43,6 +43,7 @@ const https = require('https');
 // }).on('error', (err) => {
 //   console.error('Failed to start HTTPS server:', err);
 // });
+
 app.set('trust proxy', 1);
 
 const storage = multer.diskStorage({
@@ -577,19 +578,17 @@ async function formatVideosResponse(videoIds, activeUsername) {
 }
 
 app.post('/api/videos', isAuthenticated, async (req, res) => {
-    const { videoId, count } = req.body;
+    const { videoId } = req.body;
+    let count = parseInt(req.body.count);
     const activeUsername = req.session.username;
     const N = 5;
 
-    if (!count) {
-        return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing count parameter' });
+    if (isNaN(count) || count <= 0) {
+        return res.status(200).json({ status: 'ERROR', error: true, message: 'Missing or invalid count parameter' });
     }
 
-    // Find similar videos based on videoId
-    
-    // IMPLEMENT
-
     if (!videoId) {
+        // User-based collaborative filtering
         try {
             const activeUserRatings = await getUserRatings(activeUsername);
             const activeUserViews = await getUserViews(activeUsername);
@@ -618,36 +617,38 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
         }
     } else {
+        // Item-based collaborative filtering
         try {
             const videoInteractions = await getVideoInteractions(videoId);
-    
-            // 2. Compute video similarity
+
+            // Compute video similarity
             const videoSimilarities = [];
-            const allVideos = await Video.find(); // Get all videos in the system
-    
+            const allVideos = await Video.find({ processingStatus: 'complete' });
+
             for (const otherVideo of allVideos) {
-                if (otherVideo.id.toString() !== videoId) {
+                if (otherVideo.id !== videoId) {
                     const otherVideoInteractions = await getVideoInteractions(otherVideo.id);
                     console.log(otherVideoInteractions);
                     const similarity = computeCosineSimilarityInteractions(videoInteractions, otherVideoInteractions);
-    
+
                     if (similarity > 0) {
                         videoSimilarities.push({ videoId: otherVideo.id, similarity });
                     }
                 }
             }
-    
-            // 3. Sort by similarity and get the top N similar videos
+
+            // Sort by similarity and get the top N similar videos
             videoSimilarities.sort((a, b) => b.similarity - a.similarity);
-            const topSimilarVideos = videoSimilarities.slice(0, N);
-    
-            // 4. Prepare the video data for response
+            const topSimilarVideos = videoSimilarities.slice(0, count);
+
+            // Prepare the video data for response
             const responseVideos = [];
             for (const { videoId, similarity } of topSimilarVideos) {
-                const video = await Video.findById(videoId);
+                const video = await Video.findOne({ id: videoId });
+                if (!video) continue;
                 const watched = await isVideoWatchedByUser(activeUsername, videoId);
                 const liked = await getUserVideoLikeStatus(activeUsername, videoId);
-    
+
                 responseVideos.push({
                     id: video.id,
                     description: video.description,
@@ -657,13 +658,13 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
                     likevalues: similarity
                 });
             }
-    
+
             return res.status(200).json({ status: 'OK', videos: responseVideos });
-    
+
         } catch (e) {
             console.error("Error in /api/videos:", e);
             return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
-        }    
+        }
     }
 });
 
