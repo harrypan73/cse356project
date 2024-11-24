@@ -63,8 +63,10 @@
     </div>
 
     <script>
-const videoId = "{{videoId}}";  // This will be replaced by the actual videoId in the response
-        const videoIds = [videoId, "poopharry1731286817910", "hot-special-gayalgrader+TgMBEyLoxy1731296809048"];  // Example video IDs
+        const videoId = {{videoId}};  // This will be replaced by the actual videoId in the response
+        //const videoIds = [videoId, "poopharry1731286817910", "hot-special-gayalgrader+TgMBEyLoxy1731296809048"];  // Example video IDs
+        let videoIds = []; // This will be dynamically populated
+        
         let currentVideoIndex = 0;  // Index of currently playing video
         let isFetching = false;
         let reachedEnd = false;
@@ -89,6 +91,20 @@ const videoId = "{{videoId}}";  // This will be replaced by the actual videoId i
                 const manifestUrl = `/api/manifest/${videoId}`;
                 console.log(`Loading video from manifest: ${manifestUrl}`);
                 
+                // Check if the player exists, if not, create it dynamically
+                if (!players[videoIndex]) {
+                    const newVideoElement = document.createElement('video');
+                    newVideoElement.classList.add('video-js', 'vjs-default-skin');
+                    newVideoElement.setAttribute('controls', '');
+                    newVideoElement.setAttribute('id', `videoPlayer${videoIndex + 1}`);
+                    newVideoElement.style.display = 'none'; // Hidden by default
+                    document.getElementById('video-container').appendChild(newVideoElement);
+
+                    const newPlayer = dashjs.MediaPlayer().create();
+                    newPlayer.initialize(newVideoElement, '', false);
+                    players[videoIndex] = newPlayer;
+                }
+
                 // Attach source to the current video player
                 players[videoIndex].attachSource(manifestUrl);
 
@@ -101,6 +117,15 @@ const videoId = "{{videoId}}";  // This will be replaced by the actual videoId i
                 }
 
                 window.history.pushState(null, '', `/play/${videoId}`);
+
+                fetch('/api/view', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ id: videoId }),
+                });
+
                 document.getElementById('videoTitle').textContent = `Playing Video: ${videoId}`;
                 
                 // Reset like/dislike buttons
@@ -137,28 +162,59 @@ const videoId = "{{videoId}}";  // This will be replaced by the actual videoId i
         }
 
         // Handle scroll events to load previous/next video
+        // Initialize scroll tracking variables
+        let lastScrollY = 0; // Keeps track of accumulated scroll
+        const scrollThreshold = 5; // The threshold in pixels to trigger video change
+
+        // Handle scroll events
         window.addEventListener('wheel', async (event) => {
             event.preventDefault();
-            
-            const scrollSensitivity = 0.1;
-            const adjustedDeltaY = event.deltaY * scrollSensitivity;
 
-            if (adjustedDeltaY < 0 && currentVideoIndex > 0) {
-                // Scroll up: Load previous video
-                currentVideoIndex--;
-                loadVideo(currentVideoIndex);
-            } else if (adjustedDeltaY > 0) {
-                // Scroll down: Load next video
-                if (currentVideoIndex >= videoIds.length - 3) {
-                    await fetchNewVideos();
-                }
+            // Accumulate the scroll delta
+            lastScrollY += event.deltaY;
 
+            // Check if scroll exceeds threshold for next video
+            if (lastScrollY >= scrollThreshold) {
                 if (currentVideoIndex < videoIds.length - 1) {
                     currentVideoIndex++;
                     loadVideo(currentVideoIndex);
+                    lastScrollY = 0; // Reset accumulated scroll
+                } else {
+                    await fetchNewVideos(); // Fetch more videos if we are at the end
+                }
+            }
+            // Check if scroll exceeds threshold for previous video
+            else if (lastScrollY <= -scrollThreshold) {
+                if (currentVideoIndex > 0) {
+                    currentVideoIndex--;
+                    loadVideo(currentVideoIndex);
+                    lastScrollY = 0; // Reset accumulated scroll
                 }
             }
         }, { passive: false });
+
+        // window.addEventListener('wheel', async (event) => {
+        //     event.preventDefault();
+            
+        //     const scrollSensitivity = 0.1;
+        //     const adjustedDeltaY = event.deltaY * scrollSensitivity;
+
+        //     if (adjustedDeltaY < 0 && currentVideoIndex > 0) {
+        //         // Scroll up: Load previous video
+        //         currentVideoIndex--;
+        //         loadVideo(currentVideoIndex);
+        //     } else if (adjustedDeltaY > 0) {
+        //         // Scroll down: Load next video
+        //         if (currentVideoIndex >= videoIds.length - 3) {
+        //             await fetchNewVideos();
+        //         }
+
+        //         if (currentVideoIndex < videoIds.length - 1) {
+        //             currentVideoIndex++;
+        //             loadVideo(currentVideoIndex);
+        //         }
+        //     }
+        // }, { passive: false });
 
         // Play/Pause functionality
         document.getElementById('playPauseBtn').addEventListener('click', () => {
@@ -208,61 +264,173 @@ const videoId = "{{videoId}}";  // This will be replaced by the actual videoId i
             }
         }
 
-        // Fetch new videos if the user reaches the end
-        async function fetchNewVideos() {
-            if (isFetching || reachedEnd) return;
-
+        async function fetchInitialVideos(currentVideoId) {
             try {
-                isFetching = true;
                 const response = await fetch('/api/videos', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ count: 5 }),  // Fetch 5 new videos at once
+                    body: JSON.stringify({
+                        //videoId: currentVideoId,
+                        count: 20, // Fetch initial set of 20 videos
+                    }),
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Error fetching videos: ${response.statusText}`);
+                    throw new Error(`Error fetching initial videos: ${response.statusText}`);
                 }
 
                 const data = await response.json();
-                if (data.videos && data.videos.length > 0) {
-                    const newVideoIds = data.videos.map(video => video.id);
-                    const startingIndex = videoIds.length;
-                    videoIds.push(...newVideoIds);
-                    console.log('Fetched new videos:', data.videos);
+                if (data.status === 'OK' && data.videos) {
+                    videoIds = data.videos.map(video => video.id); // Populate the videoIds array
 
-                    // Create new video players for each new video
+                    // Ensure the clicked video is the first in the list
+                    if (!videoIds.includes(currentVideoId)) {
+                        videoIds.unshift(currentVideoId);
+                    } else {
+                        // Move the clicked video to the front if it's already in the list
+                        videoIds = [currentVideoId, ...videoIds.filter(id => id !== currentVideoId)];
+                    }
+
+                    console.log('Initial video IDs:', videoIds);
+                } else {
+                    console.error('Failed to fetch initial video IDs:', data.message);
+                }
+            } catch (error) {
+                console.error('Error fetching initial videos:', error);
+            }
+        }
+
+
+        // Fetch new videos if the user reaches the end
+        // Updated fetchNewVideos function with dynamic videoId context
+        async function fetchNewVideos() {
+            if (isFetching || reachedEnd) return;
+
+            try {
+                isFetching = true;
+
+                const currentVideoId = videoIds[currentVideoIndex]; // Use the current videoId for context
+                const response = await fetch('/api/videos', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        //videoId: currentVideoId,
+                        count: 20, // Fetch next set of videos
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error fetching new videos: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (data.status === 'OK' && data.videos && data.videos.length > 0) {
+                    const newVideoIds = data.videos.map(video => video.id);
+                    videoIds.push(...newVideoIds); // Append new video IDs to the array
+                    console.log('Fetched new video IDs:', newVideoIds);
+
+                    // Create new video players for the new videos
                     newVideoIds.forEach((videoId, index) => {
-                        const overallIndex = startingIndex + index;
+                        const overallIndex = videoIds.length - newVideoIds.length + index;
 
                         const newVideoElement = document.createElement('video');
                         newVideoElement.classList.add('video-js', 'vjs-default-skin');
                         newVideoElement.setAttribute('controls', '');
-                        newVideoElement.setAttribute('id', `videoPlayer${overallIndex + 1}`); // Use +1 here
-                        newVideoElement.style.display = 'none';  // Hidden upon creation
+                        newVideoElement.setAttribute('id', `videoPlayer${overallIndex + 1}`);
+                        newVideoElement.style.display = 'none'; // Hidden upon creation
 
                         document.getElementById('video-container').appendChild(newVideoElement);
 
-                        // Create new player for the new video
+                        // Create a new player for each new video
                         const newPlayer = dashjs.MediaPlayer().create();
                         newPlayer.initialize(newVideoElement, '', false);
                         players.push(newPlayer);
                     });
                 } else {
-                    reachedEnd = true;
-                    console.log('No more videos to load');
+                    reachedEnd = true; // Mark as no more videos
+                    console.log('No more videos to fetch');
                 }
             } catch (error) {
-                console.error('Failed to fetch new videos:', error);
+                console.error('Error fetching new videos:', error);
             } finally {
                 isFetching = false;
             }
         }
 
+
+        // async function fetchNewVideos() {
+        //     if (isFetching || reachedEnd) return;
+
+        //     try {
+        //         isFetching = true;
+        //         const response = await fetch('/api/videos', {
+        //             method: 'POST',
+        //             headers: {
+        //                 'Content-Type': 'application/json',
+        //             },
+        //             body: JSON.stringify({ count: 5 }),  // Fetch 5 new videos at once
+        //         });
+
+        //         if (!response.ok) {
+        //             throw new Error(`Error fetching videos: ${response.statusText}`);
+        //         }
+
+        //         const data = await response.json();
+        //         if (data.videos && data.videos.length > 0) {
+        //             const newVideoIds = data.videos.map(video => video.id);
+        //             const startingIndex = videoIds.length;
+        //             videoIds.push(...newVideoIds);
+        //             console.log('Fetched new videos:', data.videos);
+
+        //             // Create new video players for each new video
+        //             newVideoIds.forEach((videoId, index) => {
+        //                 const overallIndex = startingIndex + index;
+
+        //                 const newVideoElement = document.createElement('video');
+        //                 newVideoElement.classList.add('video-js', 'vjs-default-skin');
+        //                 newVideoElement.setAttribute('controls', '');
+        //                 newVideoElement.setAttribute('id', `videoPlayer${overallIndex + 1}`); // Use +1 here
+        //                 newVideoElement.style.display = 'none';  // Hidden upon creation
+
+        //                 document.getElementById('video-container').appendChild(newVideoElement);
+
+        //                 // Create new player for the new video
+        //                 const newPlayer = dashjs.MediaPlayer().create();
+        //                 newPlayer.initialize(newVideoElement, '', false);
+        //                 players.push(newPlayer);
+        //             });
+        //         } else {
+        //             reachedEnd = true;
+        //             console.log('No more videos to load');
+        //         }
+        //     } catch (error) {
+        //         console.error('Failed to fetch new videos:', error);
+        //     } finally {
+        //         isFetching = false;
+        //     }
+        // }
+
         // Initialize the first video player
-        loadVideo(currentVideoIndex);
+        //loadVideo(currentVideoIndex);
+        (async function initializePage() {
+            try {
+                await fetchInitialVideos(videoId); // Ensure `videoIds` is populated
+
+                if (videoIds.length > 0) {
+                    currentVideoIndex = 0;
+                    loadVideo(currentVideoIndex); // Load the first video
+                } else {
+                    console.error('No videos available to load');
+                }
+            } catch (error) {
+                console.error('Error during initialization:', error);
+            }
+        })();
+
     </script>
 </body>
 </html>

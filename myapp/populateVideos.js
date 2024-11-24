@@ -23,6 +23,7 @@ async function createVideoEntry(videoId) {
     id: videoId,
     author: 'Unknown',  // You can modify this based on how you want to assign authors
     title: `Video ${videoId}`,  // Modify this as needed, e.g., fetch from metadata if available
+    description: 'DESCRIPTION',
     createdAt: new Date(),
     likes: [],  // No likes initially
     views: [],  // No views initially

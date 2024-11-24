@@ -353,10 +353,10 @@ app.get('/api/like_state/:id', isAuthenticated, async (req, res) => {
     const videoId = req.params.id;
   
     try {
-      let video = await Video.findOne({ id: `${videoId}` })
+      let video = await Video.findOne({ id: videoId })
   
       if (!video) {
-        video = await Video.findById(videoId);
+        //video = await Video.findById(videoId);
   
         if (!video) {
           return res.status(200).json({
@@ -387,6 +387,7 @@ app.get('/api/like_state/:id', isAuthenticated, async (req, res) => {
 
 // Collaborative Filtering Helper Functions
 async function getUserRatings(username) {
+    // console.log("In getUserRatings");
     const likedVideos = await Video.find({ 'likes.userId': username });
     const ratings = {};
     likedVideos.forEach(video => {
@@ -399,11 +400,13 @@ async function getUserRatings(username) {
 }
 
 async function getUserViews(username) {
+    console.log("In getUserViews");
     const viewedVideos = await Video.find({ 'views.userId': username });
     return viewedVideos.map(video => video.id);
 }
 
 async function isVideoWatchedByUser(userId, videoId) {
+    console.log("isVideoWatchedByUser");
     const video = await Video.findOne({ id: videoId });
 
     if (!video) {
@@ -416,6 +419,7 @@ async function isVideoWatchedByUser(userId, videoId) {
 
 
 async function getVideoInteractions(videoId) {
+    // console.log("In getVideoInteractions");
     const video = await Video.findOne({ id: videoId });
 
     if (!video) {
@@ -432,6 +436,7 @@ async function getVideoInteractions(videoId) {
 }
 
 async function getUserVideoLikeStatus(userId, videoId) {
+    console.log("In getUserVideoLikeStatus");
     const video = await Video.findOne({ id: videoId });
 
     if (!video) {
@@ -446,6 +451,7 @@ async function getUserVideoLikeStatus(userId, videoId) {
 }
 
 function computeCosineSimilarityRatings(ratingsA, ratingsB) {
+    // console.log("In computeCosineSimilarityRatings");
     const commonVideos = Object.keys(ratingsA).filter(videoId => videoId in ratingsB);
 
     if (commonVideos.length === 0) return 0;
@@ -471,6 +477,7 @@ function computeCosineSimilarityRatings(ratingsA, ratingsB) {
 }
 
 function computeCosineSimilarityInteractions(interactionsA, interactionsB) {
+    // console.log("In computeCosineSimilarityInteractions");
     const commonUsers = Object.keys(interactionsA).filter(user => interactionsB[user] !== undefined);
 
     if (commonUsers.length === 0) return 0;
@@ -495,6 +502,7 @@ function computeCosineSimilarityInteractions(interactionsA, interactionsB) {
 
 
 async function predictRatings(activeUserRatings, topUsers) {
+    console.log("In predictRatings");
     const predictedRatings = {};
 
     for (const { username, similarity } of topUsers) {
@@ -520,6 +528,7 @@ async function predictRatings(activeUserRatings, topUsers) {
 }
 
 async function selectTopVideos(predictedRatings, activeUserRatings, activeUserViews, count) {
+    console.log("In selectTopVideos");
     const videoIds = Object.keys(predictedRatings);
 
     // Exclude videos the user has already viewed
@@ -559,6 +568,7 @@ async function selectTopVideos(predictedRatings, activeUserRatings, activeUserVi
 }
 
 async function formatVideosResponse(videoIds, activeUsername) {
+    console.log("In formatVideosReponse");
     const videos = await Video.find({ id: { $in: videoIds } });
 
     return videos.map(video => {
@@ -578,6 +588,7 @@ async function formatVideosResponse(videoIds, activeUsername) {
 }
 
 app.post('/api/videos', isAuthenticated, async (req, res) => {
+    console.log("In api/videos");
     const { videoId } = req.body;
     let count = parseInt(req.body.count);
     const activeUsername = req.session.username;
@@ -609,6 +620,10 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
 
             const predictedRatings = await predictRatings(activeUserRatings, topUsers);
             const recommendedVideoIds = await selectTopVideos(predictedRatings, activeUserRatings, activeUserViews, count);
+
+            // const filteredVideoIds = recommendedVideoIds.filter(videoId => !activeUserViews.includes(videoId));
+            // const responseVideos = await formatVideosResponse(filteredVideoIds, activeUsername);
+
             const responseVideos = await formatVideosResponse(recommendedVideoIds, activeUsername);
 
             return res.status(200).json({ status: 'OK', videos: responseVideos });
@@ -624,23 +639,26 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             // Compute video similarity
             const videoSimilarities = [];
             const allVideos = await Video.find({ processingStatus: 'complete' });
-
+        
+            // Get the list of videos that the active user has already viewed
+            const activeUserViews = await getUserViews(activeUsername);  // Get the viewed videos
+        
             for (const otherVideo of allVideos) {
-                if (otherVideo.id !== videoId) {
+                // Exclude videos that the active user has already viewed
+                if (otherVideo.id !== videoId && !activeUserViews.includes(otherVideo.id)) {
                     const otherVideoInteractions = await getVideoInteractions(otherVideo.id);
-                    console.log(otherVideoInteractions);
                     const similarity = computeCosineSimilarityInteractions(videoInteractions, otherVideoInteractions);
-
+        
                     if (similarity > 0) {
                         videoSimilarities.push({ videoId: otherVideo.id, similarity });
                     }
                 }
             }
-
+        
             // Sort by similarity and get the top N similar videos
             videoSimilarities.sort((a, b) => b.similarity - a.similarity);
             const topSimilarVideos = videoSimilarities.slice(0, count);
-
+        
             // Prepare the video data for response
             const responseVideos = [];
             for (const { videoId, similarity } of topSimilarVideos) {
@@ -648,7 +666,7 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
                 if (!video) continue;
                 const watched = await isVideoWatchedByUser(activeUsername, videoId);
                 const liked = await getUserVideoLikeStatus(activeUsername, videoId);
-
+        
                 responseVideos.push({
                     id: video.id,
                     description: video.description,
@@ -658,9 +676,9 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
                     likevalues: similarity
                 });
             }
-
+        
             return res.status(200).json({ status: 'OK', videos: responseVideos });
-
+        
         } catch (e) {
             console.error("Error in /api/videos:", e);
             return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
@@ -669,11 +687,10 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
 });
 
 app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
-    console.log("CHECKPOINT 1");
+    console.log("In api/upload");
     const author = req.session.username;
 	const { title, description } = req.body;
 	const mp4File = req.file;
-    console.log("CHECKPOINT 2");
 
 	if (!author || !title || !description || !mp4File) {
 		return res.status(200).json({
@@ -721,6 +738,7 @@ app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
         
         // Ensure the media directory exists
         fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+        + await fs.promises.mkdir(path.dirname(outputFile), { recursive: true });
 
         const ffmpegCommand = [
             'ffmpeg', '-i', videoPath,
@@ -789,6 +807,7 @@ app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
 })
 
 app.post('/api/view', isAuthenticated, async (req, res) => {
+    console.log("In api/view");
 	const { id } = req.body;
 
 	// IMPLEMENT
@@ -1198,10 +1217,9 @@ app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
 });
 
   
-
 app.get('/play/:id', isAuthenticated, async (req, res) => {
-	const videoId = req.params.id;
-	console.log("ID : ", videoId);
+    const videoId = req.params.id;
+    console.log("ID : ", videoId);
 
     // View video
     await axios.post('https://chickenpotpie.cse356.compas.cs.stonybrook.edu/api/view', { id: videoId }, {
@@ -1210,7 +1228,7 @@ app.get('/play/:id', isAuthenticated, async (req, res) => {
 
     // Path to the static HTML template
     const templatePath = path.join(__dirname, 'templates', 'mediaplayer.html');
-        
+
     // Read the HTML file
     fs.readFile(templatePath, 'utf-8', (err, data) => {
         if (err) {
@@ -1218,14 +1236,14 @@ app.get('/play/:id', isAuthenticated, async (req, res) => {
             return res.status(500).send('Server error');
         }
 
-        // Replace the placeholder with the actual videoId
-        const htmlContent = data.replace('{{videoId}}', videoId);
+        // Replace the placeholder with the actual videoId, properly serialized
+        const htmlContent = data.replace('{{videoId}}', JSON.stringify(videoId));
 
         // Send the modified HTML with the embedded videoId
         res.send(htmlContent);
+    });
 });
-});
-  
+
 
 app.get('/player', (req, res) => {
 	if (!req.session.username) {
