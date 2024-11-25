@@ -10,10 +10,13 @@ const multer = require('multer');
 const subprocess = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const axios = require('axios');
+const cors = require('cors');
 
 const PORT = 3000;
 
 const https = require('https');
+
+app.use(cors());
 
 // // Load SSL certificate and key
 // let sslOptions;
@@ -46,12 +49,10 @@ const https = require('https');
 
 app.set('trust proxy', 1);
 
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const uploadDir = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
+        const uploadDir = path.join('/mnt/storage', 'uploads');
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
@@ -60,19 +61,16 @@ const storage = multer.diskStorage({
     }
 });
 
-// Initialize multer with the storage configuration
 const upload = multer({
-    limits: { fileSize: 100 * 1024 * 1024 },  // 100 MB
+    limits: { fileSize: 500 * 1024 * 1024 }, // Adjust as needed
     storage: storage,
     fileFilter: function (req, file, cb) {
-        console.log("Uploaded field:", file.fieldname); // Log field name
         if (file.mimetype !== 'video/mp4') {
             return cb(new Error('Only MP4 videos are allowed'), false);
         }
         cb(null, true);
-    },
-    fields: [{name: 'mp4File', maxCount: 1}]
-}).single('mp4File'); // Ensure 'mp4file' matches the client-side field
+    }
+}).single('mp4File');
 
 app.use(bodyParser.json());
 
@@ -81,7 +79,7 @@ app.use(
 		secret: 'your_secret_key',
 		resave: false,
 		saveUninitialized: false,
-		store: MongoStore.create({ mongoUrl: 'mongodb://localhost:27017/session_db' }),
+		store: MongoStore.create({ mongoUrl: 'mongodb://130.245.136.205:27017/session_db' }),
 		cookie: { maxAge: 1000 * 60 * 60 * 24 }, //1 day
 	})
 );
@@ -101,14 +99,14 @@ app.use((req, res, next) => {
 	next();
 });
 
-app.use(express.static(path.join(__dirname, 'templates')));
-app.use('/media', express.static(path.join(__dirname, 'media')));
-app.use('/testing', express.static(path.join(__dirname, 'testing')));
-app.use('/videos', express.static(path.join(__dirname, 'videos')));
+app.use(express.static(path.join('/mnt/storage', 'templates')));
+app.use('/media', express.static(path.join('/mnt/storage', 'media')));
+// app.use('/testing', express.static(path.join('/mnt/storage', 'testing')));
+app.use('/videos', express.static(path.join('/mnt/storage', 'videos')));
 // Serve static files from the 'templates' directory
-app.use('/templates', express.static(path.join(__dirname, 'templates')));
-//app.use('/processed_videos', express.static(path.join(__dirname, 'processed_videos')));
-app.use('/thumbnails', express.static(path.join(__dirname, 'thumbnails')));
+app.use('/templates', express.static(path.join('/mnt/storage', 'templates')));
+//app.use('/processed_videos', express.static(path.join('/mnt/storage', 'processed_videos')));
+app.use('/thumbnails', express.static(path.join('/mnt/storage', 'thumbnails')));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -120,7 +118,7 @@ app.use((err, req, res, next) => {
 	});
   });
   
-mongoose.connect('mongodb://localhost:27017/user_db', {
+mongoose.connect('mongodb://130.245.136.205:27017/user_db', {
 	useNewUrlParser: true,
 	useUnifiedTopology: true,
 });
@@ -128,7 +126,7 @@ mongoose.connect('mongodb://localhost:27017/user_db', {
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-	host: 'localhost',
+	host: '130.245.136.205',
 	port: 25,
 	secure: false,
 	tls: {
@@ -155,7 +153,7 @@ function isAuthenticated(req, res, next) {
 			message: 'Unauthorized',
 		});
 		} else {
-			return res.sendFile(path.join(__dirname, 'templates', 'login.html'));
+			return res.sendFile(path.join('/mnt/storage', 'templates', 'login.html'));
 		}
 	}
   }
@@ -163,20 +161,20 @@ function isAuthenticated(req, res, next) {
 app.get('/', (req, res) => {
     if (req.session.username) {
         // User is logged in, serve the media player directly
-        return res.sendFile(path.join(__dirname, 'templates', 'videos.html'));
+        return res.sendFile(path.join('/mnt/storage', 'templates', 'videos.html'));
     } else {
         // User is not logged in, serve the login page
-        return res.sendFile(path.join(__dirname, 'templates', 'login.html'));
+        return res.sendFile(path.join('/mnt/storage', 'templates', 'login.html'));
     }
 });
 
 
 app.get('/register', (req, res) => {
-	res.sendFile(path.join(__dirname, 'templates', 'adduser.html'));
+	res.sendFile(path.join('/mnt/storage', 'templates', 'adduser.html'));
 });
 
 app.get('/login_page', (req, res) => {
-	res.sendFile(path.join(__dirname, 'templates', 'login.html'));
+	res.sendFile(path.join('/mnt/storage', 'templates', 'login.html'));
 });
 
 
@@ -638,7 +636,7 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
 
             // Compute video similarity
             const videoSimilarities = [];
-            const allVideos = await Video.find({ processingStatus: 'complete' });
+            const allVideos = await Video.find({});
         
             // Get the list of videos that the active user has already viewed
             const activeUserViews = await getUserViews(activeUsername);  // Get the viewed videos
@@ -686,125 +684,137 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
     }
 });
 
-app.post('/api/upload', upload, isAuthenticated, async (req, res) => {
+
+const Queue = require('bull');
+
+// Create a new queue named 'video-processing'
+const videoProcessingQueue = new Queue('video-processing', {
+  redis: { port: 6379, host: '127.0.0.1' },
+});
+
+videoProcessingQueue.process(async (job) => {
+    const { jobType, videoId, videoPath } = job.data;
+    try {
+        if (jobType === 'thumbnail') {
+            // Generate thumbnail
+            const thumbnailPath = path.join('/mnt/storage', 'thumbnails', `${videoId}_thumbnail.jpg`);
+            const generateThumbnailCommand = [
+                'ffmpeg', '-i', videoPath,
+                '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
+                '-frames:v', '1', thumbnailPath, '-y',
+            ];
+            await executeFFmpegCommand(generateThumbnailCommand);
+            console.log(`Thumbnail generated for ${videoId}`);
+        } else if (jobType === 'processing') {
+            // Process video
+            const outputFile = path.join('/mnt/storage', 'media', `${videoId}.mpd`);
+            const ffmpegCommand = [
+                'ffmpeg', '-i', videoPath,
+                // Your FFmpeg parameters
+                '-map', '0:v', '-b:v:0', '512k', '-s:v:0', '640x360',
+                '-map', '0:v', '-b:v:1', '768k', '-s:v:1', '960x540',
+                '-map', '0:v', '-b:v:2', '1024k', '-s:v:2', '1280x720',
+                '-use_template', '1', '-use_timeline', '1', '-seg_duration', '10',
+                '-init_seg_name', `${videoId}_init_$RepresentationID$.m4s`,
+                '-media_seg_name', `${videoId}_chunk_$Bandwidth$_$Number$.m4s`,
+                '-adaptation_sets', 'id=0,streams=v',
+                '-f', 'dash', outputFile,
+            ];
+            await executeFFmpegCommand(ffmpegCommand);
+            // Update video status to 'complete'
+            await Video.updateOne({ id: videoId }, { processingStatus: 'complete' });
+            console.log(`Video processing completed for ${videoId}`);
+        }
+    } catch (error) {
+        console.error(`Error processing ${jobType} for video ${videoId}:`, error);
+        await Video.updateOne({ id: videoId }, { processingStatus: 'failed' });
+    }
+});
+
+  
+// Helper function to execute FFmpeg commands
+  function executeFFmpegCommand(command) {
+    return new Promise((resolve, reject) => {
+      const process = subprocess.spawn(command[0], command.slice(1));
+  
+      process.on('exit', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg exited with code ${code}`));
+        }
+      });
+  
+      process.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }
+  
+
+  app.post('/api/upload', isAuthenticated, upload, async (req, res) => {
     console.log("In api/upload");
     const author = req.session.username;
-	const { title, description } = req.body;
-	const mp4File = req.file;
+    const { title, description } = req.body;
+    const mp4File = req.file;
 
-	if (!author || !title || !description || !mp4File) {
-		return res.status(200).json({
-			status: "ERROR", 
-			error: true,
-			message: "UPLOAD FUNCTION MISSING PARAMETERS"
-		})
-	}
+    if (!author || !title || !description || !mp4File) {
+        return res.status(400).json({
+            error: "Upload function missing parameters"
+        });
+    }
 
-	try {
-		const fileName = path.basename(mp4File.path, ".mp4");
-		console.log('Uploaded file:', mp4File);
-		console.log('File name:', fileName);
-		
-		// const videoPath = path.join(__dirname, "videos", `${fileName}.mp4`);
-		const videoPath = mp4File.path;
-		// fs.writeFileSync(videoPath, mp4File.data);
+    try {
+        const fileName = path.basename(mp4File.path, ".mp4");
+        console.log('Uploaded file:', mp4File);
+        console.log('File name:', fileName);
 
-		const video = new Video({
-			id: title + author + Date.now(),
-			author: author,
-			title: title,
+        const videoPath = mp4File.path;
+
+        const video = new Video({
+            id: title + author + Date.now(),
+            author: author,
+            title: title,
             description: description,
-			likes: [],
-			views: [],
-			processingStatus: "processing"
-		});
-
-		await video.save();
-
-        // 1. Generate thumbnail (store it in the 'thumbnails' folder)
-        const thumbnailPath = path.join(__dirname, 'thumbnails', `${video.id}_thumbnail.jpg`);
-
-        // Generate the thumbnail using ffmpeg (same logic as the shell script)
-        const generateThumbnailCommand = [
-            'ffmpeg', '-i', videoPath,
-            '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
-            '-frames:v', '1', thumbnailPath, '-y'
-        ];
-
-        // Execute the ffmpeg command to create the thumbnail
-        subprocess.spawn(generateThumbnailCommand[0], generateThumbnailCommand.slice(1));		// Create chunks and manifest
-        
-        const outputFile = path.join(__dirname, 'media', `${video.id}.mpd`);
-        
-        // Ensure the media directory exists
-        fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-        + await fs.promises.mkdir(path.dirname(outputFile), { recursive: true });
-
-        const ffmpegCommand = [
-            'ffmpeg', '-i', videoPath,
-            '-map', '0:v', '-b:v:0', '512k', '-s:v:0', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:1', '768k', '-s:v:1', '960x540', '-vf', 'scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:black',
-            '-map', '0:v', '-b:v:2', '1024k', '-s:v:2', '1280x720', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:0', '254k', '-s:v:0', '320x180', '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:1', '507k', '-s:v:1', '320x180', '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:2', '759k', '-s:v:2', '480x270', '-vf', 'scale=480:270:force_original_aspect_ratio=decrease,pad=480:270:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:3', '1013k', '-s:v:3', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:4', '1254k', '-s:v:4', '640x360', '-vf', 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:5', '1883k', '-s:v:5', '768x432', '-vf', 'scale=768:432:force_original_aspect_ratio=decrease,pad=768:432:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:6', '3134k', '-s:v:6', '1024x576', '-vf', 'scale=1024:576:force_original_aspect_ratio=decrease,pad=1024:576:(ow-iw)/2:(oh-ih)/2:black',
-            // '-map', '0:v', '-b:v:7', '4952k', '-s:v:7', '1280x720', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black',
-            '-use_template', '1', '-use_timeline', '1', '-seg_duration', '10',
-            '-init_seg_name', `media/${fileName}_init_\$RepresentationID\$.m4s`,
-            '-media_seg_name', `media/${fileName}_chunk_\$Bandwidth\$_\$Number\$.m4s`,
-            '-adaptation_sets', 'id=0,streams=v',
-            '-f', 'dash', outputFile
-        ];
-
-        // const ffmpegPath = await exec('which ffmpeg');
-        // console.log('FFmpeg Path:', ffmpegPath);
-                      
-        // Run FFmpeg command in the background without waiting for it to finish
-        console.log(`Processing video in background: ${fileName}`);
-        const ffmpegProcess = subprocess.spawn(ffmpegCommand[0], ffmpegCommand.slice(1));
-
-        // Capture stderr and stdout to log errors
-        ffmpegProcess.stderr.on('data', (data) => {
-        // console.error(`FFmpeg Error: ${data.toString()}`);
-        });
-        ffmpegProcess.stdout.on('data', (data) => {
-        // console.log(`FFmpeg Output: ${data.toString()}`);
+            likes: [],
+            views: [],
+            processingStatus: "processing"
         });
 
-        // Listen for FFmpeg's completion
-        ffmpegProcess.on('exit', async (code, signal) => {
-            if (code === 0) {
-                console.log(`Successfully processed video: ${fileName}`);
-                // Update the processing status of the video to "completed"
-                video.processingStatus = "complete";
-                await video.save();
-            } else {
-                console.error(`Error processing video ${fileName}. Exit code: ${code}, Signal: ${signal}`);
-                // Optionally, you can handle the error by updating the status to "failed"
-                // video.processingStatus = "failed";
-                // await video.save();
-            }
+        await video.save();
+
+        // Ensure directories exist
+        await fs.promises.mkdir(path.join('/mnt/storage', 'thumbnails'), { recursive: true });
+        await fs.promises.mkdir(path.join('/mnt/storage', 'media'), { recursive: true });
+
+        // Enqueue thumbnail generation
+        videoProcessingQueue.add({
+            jobType: 'thumbnail',
+            videoId: video.id,
+            videoPath: videoPath,
         });
 
-		return res.status(200).json({
+        // Enqueue video processing
+        videoProcessingQueue.add({
+            jobType: 'processing',
+            videoId: video.id,
+            videoPath: videoPath,
+        });
+
+        // Return the response immediately
+        return res.status(200).json({
             status: "OK",
             error: false,
-			id: video.id
-		})
+            id: video.id
+        });
 
-	} catch (e) {
-		console.error("Error uploading video: ", e);
-		return res.status(200).json({
-			status: "ERROR",
-			error: true,
-			message: e.message
-		})
-	}
-})
+    } catch (e) {
+        console.error("Error uploading video: ", e);
+        return res.status(500).json({
+            error: e.message
+        });
+    }
+});
 
 app.post('/api/view', isAuthenticated, async (req, res) => {
     console.log("In api/view");
@@ -866,7 +876,7 @@ app.post('/api/view', isAuthenticated, async (req, res) => {
 })
 
 app.get('/upload', isAuthenticated, async (req, res) => {
-	res.sendFile(path.join(__dirname, 'templates', 'upload.html'));
+	res.sendFile(path.join('/mnt/storage', 'templates', 'upload.html'));
 })
 
 app.get('/api/processing-status', async (req, res) => {
@@ -933,7 +943,7 @@ app.post('/api/check-auth', (req, res) => {
 	}
 })
 
-const videosDir = path.join(__dirname, 'videos');
+const videosDir = path.join('/mnt/storage/videos');
 
 let videoMetadata = {};
 const metadataPath = path.join(videosDir, 'm2.json');
@@ -977,8 +987,8 @@ const generateThumbnail = (videoPath, thumbnailPath) => {
 
 // app.get('/api/thumbnail/:id', async (req, res) => {
 // 	const videoId = req.params.id;
-// 	const videoPath = path.join(__dirname, "videos", `${videoId}.mp4`);
-//     const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}.jpg`);
+// 	const videoPath = path.join('/mnt/storage', "videos", `${videoId}.mp4`);
+//     const thumbnailPath = path.join('/mnt/storage', "thumbnails", `${videoId}.jpg`);
 		
 // 	// Check if user is logged in
 // 	if (!req.session.username) {
@@ -1000,7 +1010,7 @@ const generateThumbnail = (videoPath, thumbnailPath) => {
 
 app.get('/api/thumbnail/:id', async (req, res) => {
     const videoId = req.params.id;
-    const thumbnailPath = path.join(__dirname, "thumbnails", `${videoId}_thumbnail.jpg`);
+    const thumbnailPath = path.join('/mnt/storage', "thumbnails", `${videoId}_thumbnail.jpg`);
     
     // Check if user is logged in
     if (!req.session.username) {
@@ -1039,6 +1049,7 @@ app.get('/videos', isAuthenticated, async (req, res) => {
 
                 // Find the video in the database by its title/id
                 const video = await Video.findOne({ id: title });
+                // console.log(video);
 
                 // If the video exists, check if the user has already viewed it
                 if (video) {
@@ -1056,6 +1067,7 @@ app.get('/videos', isAuthenticated, async (req, res) => {
                 return null; // If video doesn't exist or user has viewed, return null
             })
         );
+        console.log("VIDEOS: ", videos);
 
         // Filter out null values (videos that the user has already viewed or that don't exist)
         const filteredVideos = videos.filter(video => video !== null);
@@ -1071,7 +1083,7 @@ app.get('/videos', isAuthenticated, async (req, res) => {
 app.get('/media/:filename', isAuthenticated, (req, res) => {
   
 	const { filename } = req.params;
-	const filePath = path.join(__dirname, 'media', filename);
+	const filePath = path.join('/mnt/storage', 'media', filename);
   
 	fs.access(filePath, fs.constants.F_OK, (err) => {
 	  if (err) {
@@ -1102,7 +1114,7 @@ app.get('/media/:filename', isAuthenticated, (req, res) => {
 app.get('/media/:videoId/:segment', isAuthenticated, (req, res) => {
 	
 	const { videoId, segment } = req.params;
-	const filePath = path.join(__dirname, 'media', `${videoId}.mp4`);
+	const filePath = path.join('/mnt/storage', 'media', `${videoId}.mp4`);
   
 	res.sendFile(filePath, (err) => {
 	  if (err) {
@@ -1126,7 +1138,7 @@ app.get('/media/:videoId/:segment', isAuthenticated, (req, res) => {
         fileName = `${videoId}_chunk_${bandwidth}_${segmentNumber}.m4s`;
     }
 
-    const filePath = path.join(__dirname, 'media', fileName);
+    const filePath = path.join('/mnt/storage', 'media', fileName);
 
     console.log(`Requested chunk: ${fileName}, Path: ${filePath}`);
 
@@ -1161,7 +1173,7 @@ app.get('/api/manifest/:id', isAuthenticated, (req, res) => {
     console.log("Requested Manifest for Video ID:", req.params.id);
 
     const videoId = req.params.id;
-    const manifestPath = path.join(__dirname, 'media', `${videoId}.mpd`);
+    const manifestPath = path.join('/mnt/storage', 'media', `${videoId}.mpd`);
 
 	fs.readFile(manifestPath, 'utf8', (err, data) => {
         if (err) {
@@ -1227,7 +1239,7 @@ app.get('/play/:id', isAuthenticated, async (req, res) => {
     });
 
     // Path to the static HTML template
-    const templatePath = path.join(__dirname, 'templates', 'mediaplayer.html');
+    const templatePath = path.join('/mnt/storage', 'templates', 'mediaplayer.html');
 
     // Read the HTML file
     fs.readFile(templatePath, 'utf-8', (err, data) => {
@@ -1249,7 +1261,7 @@ app.get('/player', (req, res) => {
 	if (!req.session.username) {
 		return res.redirect('/login_page');
 	}
-	res.sendFile(path.join(__dirname, 'templates', 'videos.html'));
+	res.sendFile(path.join('/mnt/storage', 'templates', 'videos.html'));
 });
 
 
