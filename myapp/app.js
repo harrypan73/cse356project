@@ -654,40 +654,51 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             const [videoInteractions, allVideos, activeUserViews] = await Promise.all([
                 getVideoInteractions(videoId),
                 Video.find({}),
-                await getUserViews(activeUsername)
+                getUserViews(activeUsername)
             ])
 
             const videoSimilarities = [];
     
-            // Parallelize the process of computing similarities
-            const similarityPromises = allVideos.map(async (otherVideo) => {
-                // Exclude videos that the active user has already viewed
-                if (otherVideo.id !== videoId && !activeUserViews.includes(otherVideo.id)) {
-                    const otherVideoInteractions = await getVideoInteractions(otherVideo.id);
-                    const similarity = computeCosineSimilarityInteractions(videoInteractions, otherVideoInteractions);
-    
-                    if (similarity > 0) {
-                        videoSimilarities.push({ videoId: otherVideo.id, similarity });
-                    }
+            // Pre-fetch all videos' interaction data in parallel
+            const videoInteractionsMap = await Promise.all(allVideos.map(async (video) => {
+                if (video.id !== videoId && !activeUserViews.includes(video.id)) {
+                    return {
+                        videoId: video.id,
+                        interactions: await getVideoInteractions(video.id)
+                    };
+                }
+                return null;
+            }));
+
+            // Filter out null values
+            const validVideos = videoInteractionsMap.filter(item => item !== null);
+
+            // Compute similarities in parallel
+            validVideos.forEach(({ videoId, interactions }) => {
+                const similarity = computeCosineSimilarityInteractions(videoInteractions, interactions);
+                if (similarity > 0) {
+                    videoSimilarities.push({ videoId, similarity });
                 }
             });
-    
-            // Wait for all the similarity computations to finish
-            await Promise.all(similarityPromises);
-    
+
             // Sort by similarity and get the top N similar videos
             videoSimilarities.sort((a, b) => b.similarity - a.similarity);
             const topSimilarVideos = videoSimilarities.slice(0, count);
     
-            // Prepare the video data for response
-            const responseVideos = [];
-            const videoDetailsPromises = topSimilarVideos.map(async ({ videoId, similarity }) => {
-                const video = await Video.findOne({ id: videoId });
+            // Batch fetch all necessary video details in one query
+            const videoIds = topSimilarVideos.map(({ videoId }) => videoId);
+            const videos = await Video.find({ id: { $in: videoIds } });
+
+            // Prepare response with necessary details in parallel
+            const responseVideos = await Promise.all(topSimilarVideos.map(async ({ videoId, similarity }) => {
+                const video = videos.find(v => v.id === videoId);
                 if (!video) return null; // Skip if video is not found
                 
-                const watched = await isVideoWatchedByUser(activeUsername, videoId);
-                const liked = await getUserVideoLikeStatus(activeUsername, videoId);
-    
+                const [watched, liked] = await Promise.all([
+                    isVideoWatchedByUser(activeUsername, videoId),
+                    getUserVideoLikeStatus(activeUsername, videoId)
+                ]);
+
                 return {
                     id: video.id,
                     description: video.description,
@@ -696,14 +707,11 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
                     liked,
                     likevalues: similarity
                 };
-            });
-    
-            // Wait for all video details to be fetched
-            const videoDetails = await Promise.all(videoDetailsPromises);
-            
-            // Filter out any null values (in case video not found)
-            const filteredResponseVideos = videoDetails.filter(video => video !== null);
-    
+            }));
+
+            // Filter out any null values
+            const filteredResponseVideos = responseVideos.filter(video => video !== null);
+
             return res.status(200).json({ status: 'OK', videos: filteredResponseVideos });
             
         } catch (e) {
