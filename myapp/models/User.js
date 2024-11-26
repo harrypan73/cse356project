@@ -4,6 +4,14 @@ const userSchema = new Schema({
   password: String,
   email: { type: String, unique: true },
   verified: { type: Boolean, default: false },
+  viewedVideos: [
+    {
+        videoId: { 
+          type: String, 
+          required: true 
+        }
+    }
+  ],
   key: String,
 });
 
