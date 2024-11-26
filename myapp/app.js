@@ -86,13 +86,13 @@ app.use(
 
 
 // Logging middleware
-app.use((req, res, next) => {
-	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-	console.log("Headers:", req.headers);
-	console.log("Body:", req.body);
-	console.log("Session:", req.session);
-	next();
-});
+// app.use((req, res, next) => {
+// 	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+// 	console.log("Headers:", req.headers);
+// 	console.log("Body:", req.body);
+// 	console.log("Session:", req.session);
+// 	next();
+// });
 
 app.use((req, res, next) => {
 	res.setHeader('X-CSE356', '66d1c9697f77bf55c5004757');
@@ -199,7 +199,7 @@ app.post('/api/adduser', async (req, res) => {
 		const key = crypto.randomBytes(16).toString('hex');
 		console.log('Generated key:', key);
 
-		const user = new User({ username, password, email, verified: false, key });
+		const user = new User({ username, password, email, verified: false, viewedVideos: [], key });
 		await user.save();
 
 		const params = `email=${encodeURIComponent(email)}&key=${encodeURIComponent(key)}`;
@@ -272,80 +272,83 @@ app.get('/api/verify', async (req, res) => {
 
 app.post('/api/like', isAuthenticated, async (req, res) => {
     let { id, value } = req.body;
-  
-    console.log("Received id:", id);
-  
+
     // Parse 'value' to appropriate type
-    if (value === 'true') value = true;
-    else if (value === 'false') value = false;
-    else if (value === 'null' || value === '') value = null;
-  
-    if (!id || typeof value === 'undefined') {
-      return res.status(200).json({
-        status: "ERROR",
-        error: true,
-        message: "LIKE FUNCTION MISSING PARAMETERS"
-      });
+    if (value === 'true' || value === true) value = true;
+    else if (value === 'false' || value === false) value = false;
+    else if (value === 'null' || value === null || value === '') value = null;
+    else {
+        return res.status(200).json({ status: "ERROR", error: true, message: "Invalid value parameter" });
     }
 
-    console.log(id);
-  
+    // Validate parameters
+    if (!id || typeof value === 'undefined') {
+        return res.status(200).json({ status: "ERROR", error: true, message: "LIKE FUNCTION MISSING PARAMETERS" });
+    }
+
     try {
-        let video = await Video.findOne({ id: `${id}` })
+        const username = req.session.username;
+        const video = await Video.findOne({ id }, { likes: { $elemMatch: { userId: username } }, likesCount: 1 });
 
-        console.log(video.likes);
-
-        // Check for existing like by the user
-        const userLike = video.likes.find(like => like.userId === req.session.username);
-
-        if (userLike && userLike.value === value) {
-            // Same value as existing
-            return res.status(200).json({
-                status: "ERROR",
-                error: true,
-                message: "NO CHANGE IN LIKE/DISLIKE"
-            });
+        if (!video) {
+            return res.status(200).json({ status: "ERROR", error: true, message: "Video not found" });
         }
 
-        if (userLike) {
-            if (value === null) {
-                // Remove the like/dislike
-                video.likes = video.likes.filter(like => like.userId !== req.session.username);
-            } else {
-                // Update the value
-                userLike.value = value;
+        // Check if user already liked/disliked and update accordingly
+        const userLike = video.likes && video.likes[0];
+        let incValue = 0;
+
+        if (value === null) {
+            // Remove like/dislike
+            if (userLike) {
+                incValue = (userLike.value === true ? -1 : 0);
+                await Video.updateOne(
+                    { id },
+                    {
+                        $pull: { likes: { userId: username } },
+                        $inc: { likesCount: incValue }
+                    }
+                );
             }
         } else {
-            if (value !== null) {
-                // Add new like/dislike
-                video.likes.push({
-                    userId: req.session.username,
-                    value: value
-                });
+            if (userLike && userLike.value === value) {
+                // User is attempting to relike or redislike (no change in value)
+                return res.status(200).json({ status: "ERROR", error: true, message: "NO CHANGE IN LIKE/DISLIKE" });
             }
-            // If value is null and there's no existing like/dislike, do nothing
+
+            // Update or add like
+            incValue = (value === true ? 1 : 0) - (userLike ? (userLike.value === true ? 1 : 0) : 0);
+
+            if (userLike) {
+                // Update existing like/dislike
+                await Video.updateOne(
+                    { id, 'likes.userId': username },
+                    {
+                        $set: { 'likes.$.value': value },
+                        $inc: { likesCount: incValue }
+                    }
+                );
+            } else {
+                // Add new like
+                await Video.updateOne(
+                    { id },
+                    {
+                        $push: { likes: { userId: username, value } },
+                        $inc: { likesCount: incValue }
+                    }
+                );
+            }
         }
 
-        await video.save();
-
-        const likesCount = video.likes.filter(like => like.value === true).length;
-
-        return res.status(200).json({
-            status: "OK",
-            likes: likesCount
-        });
+        // Return the updated likes count
+        const updatedVideo = await Video.findOne({ id }, { likesCount: 1 });
+        return res.status(200).json({ status: "OK", likes: updatedVideo.likesCount });
 
     } catch (e) {
         console.error("Error liking/disliking: ", e);
-        return res.status(200).json({
-            status: "ERROR",
-            error: true,
-            message: e.message
-        });
+        return res.status(200).json({ status: "ERROR", error: true, message: e.message });
     }
 });
-
-
 
 app.get('/api/like_state/:id', isAuthenticated, async (req, res) => {
     const videoId = req.params.id;
@@ -399,8 +402,19 @@ async function getUserRatings(username) {
 
 async function getUserViews(username) {
     console.log("In getUserViews");
-    const viewedVideos = await Video.find({ 'views.userId': username });
-    return viewedVideos.map(video => video.id);
+
+    // Find the user by username
+    const user = await User.findOne({ username });
+
+    // Check if the user exists
+    if (!user) {
+        throw new Error('User not found: ', username);
+    }
+
+    // Map over the viewedVideos array to return an array of videoId's
+    console.log(user);
+    console.log(user.viewedVideos.map(view => view.videoId));
+    return user.viewedVideos.map(view => view.videoId);
 }
 
 async function isVideoWatchedByUser(userId, videoId) {
@@ -632,51 +646,67 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
     } else {
         // Item-based collaborative filtering
         try {
-            const videoInteractions = await getVideoInteractions(videoId);
+            // const videoInteractions = await getVideoInteractions(videoId);
 
-            // Compute video similarity
+            // // Fetch all videos once and filter out the ones the user has already viewed
+            // const allVideos = await Video.find({});
+            // const activeUserViews = await getUserViews(activeUsername);  // Get the viewed videos
+            
+            const [videoInteractions, allVideos, activeUserViews] = await Promise.all([
+                getVideoInteractions(videoId),
+                Video.find({}),
+                await getUserViews(activeUsername)
+            ])
+
             const videoSimilarities = [];
-            const allVideos = await Video.find({});
-        
-            // Get the list of videos that the active user has already viewed
-            const activeUserViews = await getUserViews(activeUsername);  // Get the viewed videos
-        
-            for (const otherVideo of allVideos) {
+    
+            // Parallelize the process of computing similarities
+            const similarityPromises = allVideos.map(async (otherVideo) => {
                 // Exclude videos that the active user has already viewed
                 if (otherVideo.id !== videoId && !activeUserViews.includes(otherVideo.id)) {
                     const otherVideoInteractions = await getVideoInteractions(otherVideo.id);
                     const similarity = computeCosineSimilarityInteractions(videoInteractions, otherVideoInteractions);
-        
+    
                     if (similarity > 0) {
                         videoSimilarities.push({ videoId: otherVideo.id, similarity });
                     }
                 }
-            }
-        
+            });
+    
+            // Wait for all the similarity computations to finish
+            await Promise.all(similarityPromises);
+    
             // Sort by similarity and get the top N similar videos
             videoSimilarities.sort((a, b) => b.similarity - a.similarity);
             const topSimilarVideos = videoSimilarities.slice(0, count);
-        
+    
             // Prepare the video data for response
             const responseVideos = [];
-            for (const { videoId, similarity } of topSimilarVideos) {
+            const videoDetailsPromises = topSimilarVideos.map(async ({ videoId, similarity }) => {
                 const video = await Video.findOne({ id: videoId });
-                if (!video) continue;
+                if (!video) return null; // Skip if video is not found
+                
                 const watched = await isVideoWatchedByUser(activeUsername, videoId);
                 const liked = await getUserVideoLikeStatus(activeUsername, videoId);
-        
-                responseVideos.push({
+    
+                return {
                     id: video.id,
                     description: video.description,
                     title: video.title,
                     watched,
                     liked,
                     likevalues: similarity
-                });
-            }
-        
-            return res.status(200).json({ status: 'OK', videos: responseVideos });
-        
+                };
+            });
+    
+            // Wait for all video details to be fetched
+            const videoDetails = await Promise.all(videoDetailsPromises);
+            
+            // Filter out any null values (in case video not found)
+            const filteredResponseVideos = videoDetails.filter(video => video !== null);
+    
+            return res.status(200).json({ status: 'OK', videos: filteredResponseVideos });
+            
         } catch (e) {
             console.error("Error in /api/videos:", e);
             return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
@@ -692,44 +722,44 @@ const videoProcessingQueue = new Queue('video-processing', {
   redis: { port: 6379, host: '127.0.0.1' },
 });
 
-videoProcessingQueue.process(async (job) => {
-    const { jobType, videoId, videoPath } = job.data;
-    try {
-        if (jobType === 'thumbnail') {
-            // Generate thumbnail
-            const thumbnailPath = path.join('/mnt/storage', 'thumbnails', `${videoId}_thumbnail.jpg`);
-            const generateThumbnailCommand = [
-                'ffmpeg', '-i', videoPath,
-                '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
-                '-frames:v', '1', thumbnailPath, '-y',
-            ];
-            await executeFFmpegCommand(generateThumbnailCommand);
-            console.log(`Thumbnail generated for ${videoId}`);
-        } else if (jobType === 'processing') {
-            // Process video
-            const outputFile = path.join('/mnt/storage', 'media', `${videoId}.mpd`);
-            const ffmpegCommand = [
-                'ffmpeg', '-i', videoPath,
-                // Your FFmpeg parameters
-                '-map', '0:v', '-b:v:0', '512k', '-s:v:0', '640x360',
-                '-map', '0:v', '-b:v:1', '768k', '-s:v:1', '960x540',
-                '-map', '0:v', '-b:v:2', '1024k', '-s:v:2', '1280x720',
-                '-use_template', '1', '-use_timeline', '1', '-seg_duration', '10',
-                '-init_seg_name', `${videoId}_init_$RepresentationID$.m4s`,
-                '-media_seg_name', `${videoId}_chunk_$Bandwidth$_$Number$.m4s`,
-                '-adaptation_sets', 'id=0,streams=v',
-                '-f', 'dash', outputFile,
-            ];
-            await executeFFmpegCommand(ffmpegCommand);
-            // Update video status to 'complete'
-            await Video.updateOne({ id: videoId }, { processingStatus: 'complete' });
-            console.log(`Video processing completed for ${videoId}`);
-        }
-    } catch (error) {
-        console.error(`Error processing ${jobType} for video ${videoId}:`, error);
-        await Video.updateOne({ id: videoId }, { processingStatus: 'failed' });
-    }
-});
+// videoProcessingQueue.process(async (job) => {
+//     const { jobType, videoId, videoPath } = job.data;
+//     try {
+//         if (jobType === 'thumbnail') {
+//             // Generate thumbnail
+//             const thumbnailPath = path.join('/mnt/storage', 'thumbnails', `${videoId}_thumbnail.jpg`);
+//             const generateThumbnailCommand = [
+//                 'ffmpeg', '-i', videoPath,
+//                 '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:black',
+//                 '-frames:v', '1', thumbnailPath, '-y',
+//             ];
+//             await executeFFmpegCommand(generateThumbnailCommand);
+//             console.log(`Thumbnail generated for ${videoId}`);
+//         } else if (jobType === 'processing') {
+//             // Process video
+//             const outputFile = path.join('/mnt/storage', 'media', `${videoId}.mpd`);
+//             const ffmpegCommand = [
+//                 'ffmpeg', '-i', videoPath,
+//                 // Your FFmpeg parameters
+//                 '-map', '0:v', '-b:v:0', '512k', '-s:v:0', '640x360',
+//                 '-map', '0:v', '-b:v:1', '768k', '-s:v:1', '960x540',
+//                 '-map', '0:v', '-b:v:2', '1024k', '-s:v:2', '1280x720',
+//                 '-use_template', '1', '-use_timeline', '1', '-seg_duration', '10',
+//                 '-init_seg_name', `${videoId}_init_$RepresentationID$.m4s`,
+//                 '-media_seg_name', `${videoId}_chunk_$Bandwidth$_$Number$.m4s`,
+//                 '-adaptation_sets', 'id=0,streams=v',
+//                 '-f', 'dash', outputFile,
+//             ];
+//             await executeFFmpegCommand(ffmpegCommand);
+//             // Update video status to 'complete'
+//             await Video.updateOne({ id: videoId }, { processingStatus: 'complete' });
+//             console.log(`Video processing completed for ${videoId}`);
+//         }
+//     } catch (error) {
+//         console.error(`Error processing ${jobType} for video ${videoId}:`, error);
+//         await Video.updateOne({ id: videoId }, { processingStatus: 'failed' });
+//     }
+// });
 
   
 // Helper function to execute FFmpeg commands
@@ -771,8 +801,10 @@ videoProcessingQueue.process(async (job) => {
 
         const videoPath = mp4File.path;
 
+        const videoId = title + author + Date.now();
+
         const video = new Video({
-            id: title + author + Date.now(),
+            id: videoId,
             author: author,
             title: title,
             description: description,
@@ -781,7 +813,7 @@ videoProcessingQueue.process(async (job) => {
             processingStatus: "processing"
         });
 
-        await video.save();
+        video.save();
 
         // Ensure directories exist
         await fs.promises.mkdir(path.join('/mnt/storage', 'thumbnails'), { recursive: true });
@@ -790,7 +822,7 @@ videoProcessingQueue.process(async (job) => {
         // Enqueue thumbnail generation
         videoProcessingQueue.add({
             jobType: 'thumbnail',
-            videoId: video.id,
+            videoId: videoId,
             videoPath: videoPath,
         });
 
@@ -818,62 +850,72 @@ videoProcessingQueue.process(async (job) => {
 
 app.post('/api/view', isAuthenticated, async (req, res) => {
     console.log("In api/view");
-	const { id } = req.body;
+    const { id } = req.body;
 
-	// IMPLEMENT
-	if (!id) {
-		return res.status(200).json({
-			status: "ERROR",
-			error: true,
-			message: "VIEW FUNCTION MISSING PARAMETERS"
-		})
-	}
+    // Check if the id parameter is provided
+    if (!id) {
+        return res.status(200).json({
+            status: "ERROR",
+            error: true,
+            message: "VIEW FUNCTION MISSING PARAMETERS"
+        });
+    }
 
-	try {
-		
-		let video = await Video.findOne({ id: `${id}` })
+    try {
+        // Find the video by id
+        let video = await Video.findOne({ id: `${id}` });
 
-		if (!video) {
-			return res.status(200).json({
-				status: "ERROR", 
-				error: true,
-				message: "VIDEO NOT FOUND"
-			})
-		}
+        if (!video) {
+            return res.status(200).json({
+                status: "ERROR", 
+                error: true,
+                message: "VIDEO NOT FOUND"
+            });
+        }
 
-		// Check for existing view by the user
-		const userView = video.views.find(view => view.userId === req.session.username);
+        // Check if the user has already viewed the video
+        const userView = video.views.find(view => view.userId === req.session.username);
 
-		if (userView) {
-			return res.status(200).json({
+        if (userView) {
+            // If the user has already viewed the video, return the response
+            return res.status(200).json({
                 status: "OK",
-				viewed: true
-			})
-		} else {
-			
-			// Add view before returning false
-			video.views.push({
-				userId: req.session.username
-			})
+                viewed: true
+            });
+        } else {
+            // If the user has not viewed the video, add the view to the Video schema
+            video.views.push({
+                userId: req.session.username
+            });
+            await video.save();
 
-			await video.save();
+            // Also, update the User schema to track this video as viewed
+            await User.findOneAndUpdate(
+                { username: req.session.username },
+                {
+                    $push: {
+                        viewedVideos: {
+                            videoId: id
+                        }
+                    }
+                }
+            );
 
-			return res.status(200).json({
+            return res.status(200).json({
                 status: "OK",
-				viewed: false
-			})
-		}
+                viewed: false
+            });
+        }
 
-	} catch (e) {
-		console.error("Error processing view: ", e);
-		res.status(200).json({
-			status: "ERROR",
-			error: true,
-			message: e.message
-		})
-	}
-
-})
+    } catch (e) {
+        console.error("Error processing view: ", e);
+        res.status(200).json({
+            status: "ERROR",
+            error: true,
+            message: e.message
+        });
+    }
+});
 
 app.get('/upload', isAuthenticated, async (req, res) => {
 	res.sendFile(path.join('/mnt/storage', 'templates', 'upload.html'));
