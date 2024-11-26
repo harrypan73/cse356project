@@ -79,7 +79,7 @@ app.use(
 		secret: 'your_secret_key',
 		resave: false,
 		saveUninitialized: false,
-		store: MongoStore.create({ mongoUrl: 'mongodb://130.245.136.205:27017/session_db' }),
+		store: MongoStore.create({ mongoUrl: 'mongodb://130.245.136.26:27017/session_db' }),
 		cookie: { maxAge: 1000 * 60 * 60 * 24 }, //1 day
 	})
 );
@@ -118,7 +118,7 @@ app.use((err, req, res, next) => {
 	});
   });
   
-mongoose.connect('mongodb://130.245.136.205:27017/user_db', {
+mongoose.connect('mongodb://130.245.136.26:27017/user_db', {
 	useNewUrlParser: true,
 	useUnifiedTopology: true,
 });
@@ -126,7 +126,7 @@ mongoose.connect('mongodb://130.245.136.205:27017/user_db', {
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-	host: '130.245.136.205',
+	host: '130.245.136.26',
 	port: 25,
 	secure: false,
 	tls: {

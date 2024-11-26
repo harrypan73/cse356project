@@ -4,7 +4,7 @@ const subprocess = require('child_process');
 const Video = require('./models/Video'); 
 const mongoose = require('mongoose');
 
-mongoose.connect('mongodb://130.245.136.205:27017/user_db', {
+mongoose.connect('mongodb://130.245.136.26:27017/user_db', {
 	useNewUrlParser: true,
 	useUnifiedTopology: true,
 });
@@ -78,8 +78,8 @@ function executeFFmpegCommand(command) {
 }
   
 // Clear all jobs from the queue
-// videoProcessingQueue.empty().then(() => {
-//     console.log('Queue cleared.');
-// }).catch((error) => {
-//     console.error('Error clearing queue:', error);
-// });
+videoProcessingQueue.empty().then(() => {
+    console.log('Queue cleared.');
+}).catch((error) => {
+    console.error('Error clearing queue:', error);
+});

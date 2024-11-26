@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const Video = require('./models/Video');  // Adjust the path to where your Video model is defined
 
 // MongoDB connection
-mongoose.connect('mongodb://localhost:27017/user_db', {
+mongoose.connect('mongodb://130.245.136.26:27017/user_db', {
   useNewUrlParser: true,
   useUnifiedTopology: true
 }).then(() => {
