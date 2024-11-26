@@ -86,13 +86,13 @@ app.use(
 
 
 // Logging middleware
-// app.use((req, res, next) => {
-// 	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-// 	console.log("Headers:", req.headers);
-// 	console.log("Body:", req.body);
-// 	console.log("Session:", req.session);
-// 	next();
-// });
+app.use((req, res, next) => {
+	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+	console.log("Headers:", req.headers);
+	console.log("Body:", req.body);
+	console.log("Session:", req.session);
+	next();
+});
 
 app.use((req, res, next) => {
 	res.setHeader('X-CSE356', '66d1c9697f77bf55c5004757');
@@ -341,8 +341,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
         }
 
         // Return the updated likes count
-        const updatedVideo = await Video.findOne({ id }, { likesCount: 1 });
-        return res.status(200).json({ status: "OK", likes: updatedVideo.likesCount });
+        return res.status(200).json({ status: "OK", likes: video.likesCount });
 
     } catch (e) {
         console.error("Error liking/disliking: ", e);
@@ -413,7 +412,7 @@ async function getUserViews(username) {
 
     // Map over the viewedVideos array to return an array of videoId's
     console.log(user);
-    console.log(user.viewedVideos.map(view => view.videoId));
+    // console.log(user.viewedVideos.map(view => view.videoId));
     return user.viewedVideos.map(view => view.videoId);
 }
 
@@ -816,8 +815,8 @@ const videoProcessingQueue = new Queue('video-processing', {
         video.save();
 
         // Ensure directories exist
-        await fs.promises.mkdir(path.join('/mnt/storage', 'thumbnails'), { recursive: true });
-        await fs.promises.mkdir(path.join('/mnt/storage', 'media'), { recursive: true });
+        // await fs.promises.mkdir(path.join('/mnt/storage', 'thumbnails'), { recursive: true });
+        // await fs.promises.mkdir(path.join('/mnt/storage', 'media'), { recursive: true });
 
         // Enqueue thumbnail generation
         videoProcessingQueue.add({
