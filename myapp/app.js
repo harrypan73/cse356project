@@ -86,13 +86,13 @@ app.use(
 
 
 // Logging middleware
-app.use((req, res, next) => {
-	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-	console.log("Headers:", req.headers);
-	console.log("Body:", req.body);
-	console.log("Session:", req.session);
-	next();
-});
+// app.use((req, res, next) => {
+// 	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+// 	console.log("Headers:", req.headers);
+// 	console.log("Body:", req.body);
+// 	console.log("Session:", req.session);
+// 	next();
+// });
 
 app.use((req, res, next) => {
 	res.setHeader('X-CSE356', '66d1c9697f77bf55c5004757');
@@ -651,69 +651,136 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             // const allVideos = await Video.find({});
             // const activeUserViews = await getUserViews(activeUsername);  // Get the viewed videos
             
-            const [videoInteractions, allVideos, activeUserViews] = await Promise.all([
-                getVideoInteractions(videoId),
-                Video.find({}),
-                getUserViews(activeUsername)
-            ])
+            // const [videoInteractions, allVideos, activeUserViews] = await Promise.all([
+            //     getVideoInteractions(videoId),
+            //     Video.find({}),
+            //     getUserViews(activeUsername)
+            // ])
 
-            const videoSimilarities = [];
+            // const videoSimilarities = [];
+
+            // console.log(activeUserViews);
     
-            // Pre-fetch all videos' interaction data in parallel
-            const videoInteractionsMap = await Promise.all(allVideos.map(async (video) => {
-                if (video.id !== videoId && !activeUserViews.includes(video.id)) {
-                    return {
-                        videoId: video.id,
-                        interactions: await getVideoInteractions(video.id)
-                    };
-                }
-                return null;
-            }));
+            // // Pre-fetch all videos' interaction data in parallel
+            // const videoInteractionsMap = await Promise.all(allVideos.map(async (video) => {
+            //     if (video.id !== videoId && !activeUserViews.includes(video.id)) {
+            //         return {
+            //             videoId: video.id,
+            //             interactions: await getVideoInteractions(video.id)
+            //         };
+            //     }
+            //     return null;
+            // }));
 
-            // Filter out null values
-            const validVideos = videoInteractionsMap.filter(item => item !== null);
+            // // Filter out null values
+            // const validVideos = videoInteractionsMap.filter(item => item !== null);
+            // // console.log("validVideos: ", validVideos);
 
-            // Compute similarities in parallel
-            validVideos.forEach(({ videoId, interactions }) => {
-                const similarity = computeCosineSimilarityInteractions(videoInteractions, interactions);
-                if (similarity > 0) {
-                    videoSimilarities.push({ videoId, similarity });
-                }
-            });
+            // // Compute similarities in parallel
+            // validVideos.forEach(({ videoId, interactions }) => {
+            //     const similarity = computeCosineSimilarityInteractions(videoInteractions, interactions);
+            //     if (similarity > 0) {
+            //         videoSimilarities.push({ videoId, similarity });
+            //     }
+            // });
 
-            // Sort by similarity and get the top N similar videos
-            videoSimilarities.sort((a, b) => b.similarity - a.similarity);
-            const topSimilarVideos = videoSimilarities.slice(0, count);
+            // // Sort by similarity and get the top N similar videos
+            // videoSimilarities.sort((a, b) => b.similarity - a.similarity);
+            // const topSimilarVideos = videoSimilarities.slice(0, count);
+            // // console.log("top similar: ", topSimilarVideos);
     
-            // Batch fetch all necessary video details in one query
-            const videoIds = topSimilarVideos.map(({ videoId }) => videoId);
-            const videos = await Video.find({ id: { $in: videoIds } });
+            // // Batch fetch all necessary video details in one query
+            // const videoIds = topSimilarVideos.map(({ videoId }) => videoId);
+            // const videos = await Video.find({ id: { $in: videoIds } });
 
-            // Prepare response with necessary details in parallel
-            const responseVideos = await Promise.all(topSimilarVideos.map(async ({ videoId, similarity }) => {
-                const video = videos.find(v => v.id === videoId);
-                if (!video) return null; // Skip if video is not found
+            // // Prepare response with necessary details in parallel
+            // const responseVideos = await Promise.all(topSimilarVideos.map(async ({ videoId, similarity }) => {
+            //     const video = videos.find(v => v.id === videoId);
+            //     if (!video) return null; // Skip if video is not found
                 
-                const [watched, liked] = await Promise.all([
-                    isVideoWatchedByUser(activeUsername, videoId),
-                    getUserVideoLikeStatus(activeUsername, videoId)
-                ]);
+            //     const [watched, liked] = await Promise.all([
+            //         isVideoWatchedByUser(activeUsername, videoId),
+            //         getUserVideoLikeStatus(activeUsername, videoId)
+            //     ]);
 
-                return {
-                    id: video.id,
-                    description: video.description,
-                    title: video.title,
-                    watched,
-                    liked,
-                    likevalues: similarity
-                };
+            //     return {
+            //         id: video.id,
+            //         description: video.description,
+            //         title: video.title,
+            //         watched,
+            //         liked,
+            //         likevalues: similarity
+            //     };
+            // }));
+
+            // // Filter out any null values
+            // const filteredResponseVideos = responseVideos.filter(video => video !== null);
+            // // console.log("filteredVideos: ", filteredResponseVideos);
+
+            // return res.status(200).json({ status: 'OK', videos: filteredResponseVideos });
+            
+            // Step 1: Get the active user from the database
+            const activeUser = await User.findOne({ username: activeUsername }).exec();
+            if (!activeUser) {
+                return res.status(200).json({ status: "ERROR", error: true, message: 'User not found' });
+            }
+
+            // Step 2: Get the current video and the users who liked it
+            const video = await Video.findOne({ id: videoId }).exec();
+            if (!video) {
+                return res.status(200).json({ status: "ERROR", error: true, message: 'Video not found' });
+            }
+
+            // Collect the list of user IDs who liked the current video
+            const userLikes = video.likes.filter(like => like.value === true).map(like => like.userId);
+
+            // Step 3: Get the list of video IDs the active user has viewed
+            const viewedVideoIds = activeUser.viewedVideos.map(view => view.videoId);
+
+            // Step 4: Use aggregation to find similar videos
+            const similarVideos = await Video.aggregate([
+                {
+                    $match: {
+                        'likes.userId': { $in: userLikes },  // Videos liked by the same users
+                        id: { $ne: videoId }, // Exclude the current video
+                        id: { $nin: viewedVideoIds } // Exclude videos that the active user has already viewed
+                    }
+                },
+                {
+                    $project: {
+                        id: 1,
+                        title: 1,
+                        description: 1,
+                        likevalues: {
+                            $size: {
+                                $filter: {
+                                    input: '$likes',
+                                    as: 'like',
+                                    cond: { $in: ['$$like.userId', userLikes] }
+                                }
+                            }
+                        },
+                        likedByUser: { $in: [activeUser._id, '$likes.userId'] }
+                    }
+                },
+                { $sort: { likevalues: -1 } }, // Sort by number of common likes (descending)
+                { $limit: count } // Limit to 'count' number of recommendations
+            ]).exec();
+
+            // Step 5: Format the response
+            const response = similarVideos.map(video => ({
+                id: video.id,
+                description: video.description,
+                title: video.title,
+                watched: activeUser.viewedVideos.some(view => view.videoId === video.id),
+                liked: video.likedByUser ? true : null, // Liked by current user or null if not liked
+                likevalues: video.likevalues
             }));
 
-            // Filter out any null values
-            const filteredResponseVideos = responseVideos.filter(video => video !== null);
+            // Return the response
+            return res.status(200).json({ status: 'OK', videos: response });
 
-            return res.status(200).json({ status: 'OK', videos: filteredResponseVideos });
-            
+
         } catch (e) {
             console.error("Error in /api/videos:", e);
             return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
