@@ -15,4 +15,7 @@ const userSchema = new Schema({
   key: String,
 });
 
+// Index on viewedVideos to speed up filtering of already viewed videos
+userSchema.index({ "viewedVideos.videoId": 1 });
+
 module.exports = model('User', userSchema);

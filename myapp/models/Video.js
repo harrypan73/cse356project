@@ -55,4 +55,6 @@ const videoSchema = new Schema({
 	}
 })
 
+videoSchema.index({ "views.userId": 1 });
+
 module.exports = model('Video', videoSchema);

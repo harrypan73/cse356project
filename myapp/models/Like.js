@@ -15,5 +15,8 @@ const likeSchema = new Schema({
       required: true,
     },
   });
-  
-  module.exports = model('Like', likeSchema);  
+
+// Compound index to optimize queries involving both userId and videoId
+likeSchema.index({ userId: 1, videoId: 1 });
+
+module.exports = model('Like', likeSchema);  
