@@ -289,12 +289,8 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
     try {
         const username = req.session.username;
 
-        // Use findOneAndUpdate to atomically find and modify the video
-        const video = await Video.findOneAndUpdate(
-            { id },
-            { $inc: { likesCount: (value === true ? 1 : (value === false ? -1 : 0)) } },
-            { returnDocument: 'after', projection: { likes: 1, likesCount: 1 } }
-        );
+        // Fetch video and current likes
+        const video = await Video.findOne({ id }, { likes: 1, likesCount: 1 });
 
         if (!video) {
             return res.status(200).json({ status: "ERROR", error: true, message: "Video not found" });
@@ -304,13 +300,13 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
         const userLike = video.likes.find(like => like.userId === username);
 
         let updateQuery = {};
+        let incValue = 0;
 
         if (value === null) {
             // Remove like/dislike if user had already liked/disliked
             if (userLike) {
-                updateQuery = {
-                    $pull: { likes: { userId: username } }
-                };
+                incValue = (userLike.value === true ? -1 : (userLike.value === false ? 1 : 0));  // Adjust likesCount
+                updateQuery = { $pull: { likes: { userId: username } } };
             }
         } else {
             if (userLike) {
@@ -318,25 +314,34 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
                     // No change, return early
                     return res.status(200).json({ status: "ERROR", error: true, message: "NO CHANGE IN LIKE/DISLIKE" });
                 }
+
                 // Update the existing like/dislike
+                incValue = (value === true ? 1 : (value === false ? -1 : 0)) - (userLike.value === true ? 1 : (userLike.value === false ? -1 : 0));
                 updateQuery = {
                     $set: { 'likes.$.value': value }
                 };
             } else {
                 // Add a new like/dislike
+                incValue = (value === true ? 1 : (value === false ? -1 : 0));
                 updateQuery = {
                     $push: { likes: { userId: username, value } }
                 };
             }
         }
 
-        // Perform the update
+        // Update the video document if there's a change
         if (Object.keys(updateQuery).length > 0) {
-            await Video.updateOne({ id }, updateQuery);
+            const updatedVideo = await Video.updateOne(
+                { id, 'likes.userId': username },  // Match based on userId inside likes array
+                { 
+                    ...updateQuery, 
+                    $inc: { likesCount: incValue }  // Increment likesCount based on the action
+                }
+            );
         }
 
-        // Return the updated likes count directly from the video object
-        return res.status(200).json({ status: "OK", likes: video.likesCount });
+        // Return the updated likes count
+        return res.status(200).json({ status: "OK", likes: video.likesCount + incValue });
 
     } catch (e) {
         console.error("Error liking/disliking: ", e);
