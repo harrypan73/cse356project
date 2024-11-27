@@ -736,82 +736,81 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             if (!activeUser) {
                 return res.status(200).json({ status: "ERROR", error: true, message: 'User not found' });
             }
-
-            // Step 2: Get the current video and the users who liked it
+            
+            // Step 1: Get the current video
             const video = await Video.findOne({ id: videoId }).exec();
             if (!video) {
                 return res.status(200).json({ status: "ERROR", error: true, message: 'Video not found' });
             }
-
-            // Collect the list of user IDs who liked the current video
+            
+            // Step 2: Get the list of user IDs who liked the current video
             const userLikes = await Like.find({ videoId: video.id, value: true }).select('userId');
-            // console.log("UserLikes: ", userLikes.map(like => like.userId));
-
+            const userIds = userLikes.map(like => like.userId);
+            
             // Step 3: Get the list of video IDs the active user has viewed
             const viewedVideoIds = activeUser.viewedVideos.map(view => view.videoId);
-            // console.log("viewedVideoIds: ", viewedVideoIds);
-
+            
             // Step 4: Use aggregation to find similar videos
             const similarVideos = await Video.aggregate([
-                // Step 1: Match videos that are liked by the same users who liked the current video
+                // Match videos liked by the same users who liked the current video
+                {
+                    $match: {
+                        id: { $ne: videoId },  // Exclude the current video
+                        id: { $nin: viewedVideoIds },  // Exclude already viewed videos
+                    }
+                },
                 {
                     $lookup: {
-                        from: 'likes', // Assuming the 'Like' collection is named 'likes'
-                        localField: 'id', // The video ID in the 'Video' collection
-                        foreignField: 'videoId', // The video ID in the 'Like' collection
-                        as: 'likesInfo' // The alias where matched likes will be stored
+                        from: 'likes',
+                        localField: 'id',
+                        foreignField: 'videoId',
+                        as: 'likesInfo'
                     }
                 },
                 {
                     $match: {
-                        'likesInfo.userId': { $in: userLikes.map(like => like.userId) }, // Find videos liked by the same users
-                        id: { $ne: videoId }, // Exclude the current video
-                        id: { $nin: viewedVideoIds } // Exclude already viewed videos
+                        'likesInfo.userId': { $in: userIds }  // Videos liked by the same users
                     }
                 },
-                // Step 2: Add a field for the number of common likes between the users
                 {
                     $addFields: {
                         likevalues: {
                             $size: {
                                 $filter: {
-                                    input: '$likesInfo', // Use the 'likesInfo' array populated by $lookup
+                                    input: '$likesInfo',  // Filter the likesInfo array
                                     as: 'like',
-                                    cond: { $in: ['$$like.userId', userLikes.map(like => like.userId)] } // Match common likes
+                                    cond: { $in: ['$$like.userId', userIds] }  // Count common likes
                                 }
                             }
                         }
                     }
                 },
-                // Step 3: Project the fields you need (id, title, description, etc.)
                 {
                     $project: {
                         id: 1,
                         title: 1,
                         description: 1,
-                        likevalues: 1, // Include the computed common likes
-                        likedByUser: { $in: [activeUser._id, '$likesInfo.userId'] } // Check if the active user liked this video
+                        likevalues: 1,  // Include common likes
+                        likedByUser: { $in: [activeUser._id, '$likesInfo.userId'] }  // Check if the active user liked this video
                     }
                 },
-                // Step 4: Sort by the number of common likes (descending order)
-                { $sort: { likevalues: -1 } },
-                // Step 5: Limit the number of similar videos to return
-                { $limit: count }
+                { $sort: { likevalues: -1 } },  // Sort by number of common likes
+                { $limit: count }  // Limit the number of results
             ]).exec();
-                
+            
             // Step 5: Format the response
             const response = similarVideos.map(video => ({
                 id: video.id,
                 description: video.description,
                 title: video.title,
                 watched: activeUser.viewedVideos.some(view => view.videoId === video.id),
-                liked: video.likedByUser ? true : null, // Liked by current user or null if not liked
+                liked: video.likedByUser ? true : null,
                 likevalues: video.likevalues
             }));
-
+            
             // Return the response
             return res.status(200).json({ status: 'OK', videos: response });
-
+            
 
         } catch (e) {
             console.error("Error in /api/videos:", e);
