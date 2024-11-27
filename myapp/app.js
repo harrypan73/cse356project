@@ -744,41 +744,61 @@ app.post('/api/videos', isAuthenticated, async (req, res) => {
             }
 
             // Collect the list of user IDs who liked the current video
-            const userLikes = video.likes.filter(like => like.value === true).map(like => like.userId);
+            const userLikes = await Like.find({ videoId: video.id, value: true }).select('userId');
+            // console.log("UserLikes: ", userLikes.map(like => like.userId));
 
             // Step 3: Get the list of video IDs the active user has viewed
             const viewedVideoIds = activeUser.viewedVideos.map(view => view.videoId);
+            // console.log("viewedVideoIds: ", viewedVideoIds);
 
             // Step 4: Use aggregation to find similar videos
             const similarVideos = await Video.aggregate([
+                // Step 1: Match videos that are liked by the same users who liked the current video
                 {
-                    $match: {
-                        'likes.userId': { $in: userLikes },  // Videos liked by the same users
-                        id: { $ne: videoId }, // Exclude the current video
-                        id: { $nin: viewedVideoIds } // Exclude videos that the active user has already viewed
+                    $lookup: {
+                        from: 'likes', // Assuming the 'Like' collection is named 'likes'
+                        localField: 'id', // The video ID in the 'Video' collection
+                        foreignField: 'videoId', // The video ID in the 'Like' collection
+                        as: 'likesInfo' // The alias where matched likes will be stored
                     }
                 },
+                {
+                    $match: {
+                        'likesInfo.userId': { $in: userLikes.map(like => like.userId) }, // Find videos liked by the same users
+                        id: { $ne: videoId }, // Exclude the current video
+                        id: { $nin: viewedVideoIds } // Exclude already viewed videos
+                    }
+                },
+                // Step 2: Add a field for the number of common likes between the users
+                {
+                    $addFields: {
+                        likevalues: {
+                            $size: {
+                                $filter: {
+                                    input: '$likesInfo', // Use the 'likesInfo' array populated by $lookup
+                                    as: 'like',
+                                    cond: { $in: ['$$like.userId', userLikes.map(like => like.userId)] } // Match common likes
+                                }
+                            }
+                        }
+                    }
+                },
+                // Step 3: Project the fields you need (id, title, description, etc.)
                 {
                     $project: {
                         id: 1,
                         title: 1,
                         description: 1,
-                        likevalues: {
-                            $size: {
-                                $filter: {
-                                    input: '$likes',
-                                    as: 'like',
-                                    cond: { $in: ['$$like.userId', userLikes] }
-                                }
-                            }
-                        },
-                        likedByUser: { $in: [activeUser._id, '$likes.userId'] }
+                        likevalues: 1, // Include the computed common likes
+                        likedByUser: { $in: [activeUser._id, '$likesInfo.userId'] } // Check if the active user liked this video
                     }
                 },
-                { $sort: { likevalues: -1 } }, // Sort by number of common likes (descending)
-                { $limit: count } // Limit to 'count' number of recommendations
+                // Step 4: Sort by the number of common likes (descending order)
+                { $sort: { likevalues: -1 } },
+                // Step 5: Limit the number of similar videos to return
+                { $limit: count }
             ]).exec();
-
+                
             // Step 5: Format the response
             const response = similarVideos.map(video => ({
                 id: video.id,
