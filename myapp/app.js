@@ -302,7 +302,13 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
             // Remove like/dislike
             if (userLike) {
                 incValue = (userLike.value === true ? -1 : 0);
-                video.likes = video.likes.filter(like => like.userId !== username);
+                await Video.updateOne(
+                    { id },
+                    {
+                        $pull: { likes: { userId: username } },
+                        $inc: { likesCount: incValue }
+                    }
+                );
             }
         } else {
             if (userLike && userLike.value === value) {
@@ -315,18 +321,26 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
 
             if (userLike) {
                 // Update existing like/dislike
-                incValue = (value === true ? 1 : 0) - (userLike.value === true ? 1 : 0);
-                userLike.value = value; // Update the value in memory
+                await Video.updateOne(
+                    { id, 'likes.userId': username },
+                    {
+                        $set: { 'likes.$.value': value },
+                        $inc: { likesCount: incValue }
+                    }
+                );
             } else {
                 // Add new like
-                incValue = (value === true ? 1 : 0);
-                video.likes.push({ userId: username, value }); // Add new like to the array
+                await Video.updateOne(
+                    { id },
+                    {
+                        $push: { likes: { userId: username, value } },
+                        $inc: { likesCount: incValue }
+                    }
+                );
             }
         }
 
         // Return the updated likes count
-        video.likesCount += incValue;
-        await video.save();
         return res.status(200).json({ status: "OK", likes: video.likesCount });
 
     } catch (e) {
