@@ -180,6 +180,7 @@ app.get('/login_page', (req, res) => {
 
 const User = require('./models/User');
 const Video = require('./models/Video');
+const Like = require('./models/Like');
 const crypto = require('crypto');
 
 app.post('/api/adduser', async (req, res) => {
@@ -272,83 +273,69 @@ app.get('/api/verify', async (req, res) => {
 
 app.post('/api/like', isAuthenticated, async (req, res) => {
     let { id, value } = req.body;
-
+  
     // Parse 'value' to appropriate type
     if (value === 'true' || value === true) value = true;
     else if (value === 'false' || value === false) value = false;
     else if (value === 'null' || value === null || value === '') value = null;
     else {
-        return res.status(200).json({ status: "ERROR", error: true, message: "Invalid value parameter" });
+      return res.status(200).json({ status: 'ERROR', error: true, message: 'Invalid value parameter' });
     }
-
+  
     // Validate parameters
     if (!id || typeof value === 'undefined') {
-        return res.status(200).json({ status: "ERROR", error: true, message: "LIKE FUNCTION MISSING PARAMETERS" });
+      return res.status(200).json({ status: 'ERROR', error: true, message: 'LIKE FUNCTION MISSING PARAMETERS' });
     }
-
+  
     try {
         const username = req.session.username;
-        const video = await Video.findOne({ id }, { likes: { $elemMatch: { userId: username } }, likesCount: 1 });
 
+        // Fetch the video with only the necessary fields (video id and likes count)
+        const video = await Video.findOne({ id }, { likesCount: 1 });
         if (!video) {
-            return res.status(200).json({ status: "ERROR", error: true, message: "Video not found" });
+          return res.status(200).json({ status: 'ERROR', error: true, message: 'Video not found' });
         }
-
-        // Check if user already liked/disliked and update accordingly
-        const userLike = video.likes && video.likes[0];
-        let incValue = 0;
-
+        
+        // Check if the user has already liked this video
+        let userLike = await Like.findOne({ videoId: id, userId: username });
+        
         if (value === null) {
-            // Remove like/dislike
-            if (userLike) {
-                incValue = (userLike.value === true ? -1 : 0);
-                await Video.updateOne(
-                    { id },
-                    {
-                        $pull: { likes: { userId: username } },
-                        $inc: { likesCount: incValue }
-                    }
-                );
-            }
+          // Remove like/dislike
+          if (userLike) {
+            // Adjust likesCount based on the user's previous action
+            await Video.updateOne({ id }, { $inc: { likesCount: userLike.value === true ? -1 : 1 } });
+            await Like.deleteOne({ videoId: id, userId: username });
+          }
         } else {
-            if (userLike && userLike.value === value) {
-                // User is attempting to relike or redislike (no change in value)
-                return res.status(200).json({ status: "ERROR", error: true, message: "NO CHANGE IN LIKE/DISLIKE" });
+          if (userLike) {
+            // Update existing like/dislike
+            if (userLike.value === value) {
+              // No change in like/dislike
+              return res.status(200).json({ status: 'ERROR', error: true, message: 'NO CHANGE IN LIKE/DISLIKE' });
             }
-
-            // Update or add like
-            incValue = (value === true ? 1 : 0) - (userLike ? (userLike.value === true ? 1 : 0) : 0);
-
-            if (userLike) {
-                // Update existing like/dislike
-                await Video.updateOne(
-                    { id, 'likes.userId': username },
-                    {
-                        $set: { 'likes.$.value': value },
-                        $inc: { likesCount: incValue }
-                    }
-                );
-            } else {
-                // Add new like
-                await Video.updateOne(
-                    { id },
-                    {
-                        $push: { likes: { userId: username, value } },
-                        $inc: { likesCount: incValue }
-                    }
-                );
-            }
+        
+            // Handle the swing in the like/dislike value
+            await Video.updateOne({ id }, { $inc: { likesCount: value === true ? 2 : -2 } });
+        
+            // Change the like/dislike value
+            userLike.value = value;
+            await userLike.save();
+          } else {
+            // Add new like
+            await Like.create({ userId: username, videoId: id, value });
+            await Video.updateOne({ id }, { $inc: { likesCount: value === true ? 1 : -1 } });
+          }
         }
-
+        
         // Return the updated likes count
-        return res.status(200).json({ status: "OK", likes: video.likesCount });
-
+        return res.status(200).json({ status: 'OK', likes: video.likesCount });
+          
     } catch (e) {
-        console.error("Error liking/disliking: ", e);
-        return res.status(200).json({ status: "ERROR", error: true, message: e.message });
+      console.error('Error liking/disliking: ', e);
+      return res.status(200).json({ status: 'ERROR', error: true, message: e.message });
     }
-});
-
+  });
+  
 app.get('/api/like_state/:id', isAuthenticated, async (req, res) => {
     const videoId = req.params.id;
   
@@ -387,16 +374,24 @@ app.get('/api/like_state/:id', isAuthenticated, async (req, res) => {
 
 // Collaborative Filtering Helper Functions
 async function getUserRatings(username) {
-    // console.log("In getUserRatings");
-    const likedVideos = await Video.find({ 'likes.userId': username });
-    const ratings = {};
-    likedVideos.forEach(video => {
-        const likeEntry = video.likes.find(like => like.userId === username);
-        if (likeEntry) {
-            ratings[video.id] = likeEntry.value ? 1 : -1; // Map true to +1, false to -1
-        }
-    });
-    return ratings;
+    try {
+        // Query the `Like` collection for all likes by the user
+        const userLikes = await Like.find({ userId: username });
+
+        // Create an object to hold the video ratings
+        const ratings = {};
+
+        // Iterate through the user's likes and assign a rating (+1 for like, -1 for dislike)
+        userLikes.forEach(likeEntry => {
+            // Here, `likeEntry.value` will be either `true` (like) or `false` (dislike)
+            ratings[likeEntry.videoId] = likeEntry.value ? 1 : -1; // Map true to +1, false to -1
+        });
+
+        return ratings;
+    } catch (e) {
+        console.error("Error getting user ratings: ", e);
+        throw e;
+    }
 }
 
 async function getUserViews(username) {
@@ -579,23 +574,40 @@ async function selectTopVideos(predictedRatings, activeUserRatings, activeUserVi
 }
 
 async function formatVideosResponse(videoIds, activeUsername) {
-    console.log("In formatVideosReponse");
-    const videos = await Video.find({ id: { $in: videoIds } });
+    console.log("In formatVideosResponse");
 
-    return videos.map(video => {
-        const userLikeEntry = video.likes.find(like => like.userId === activeUsername);
-        const liked = userLikeEntry ? (userLikeEntry.value === true ? true : false) : null;
-        const watched = video.views.some(view => view.userId === activeUsername);
+    try {
+        // Find the videos from the Video collection
+        const videos = await Video.find({ id: { $in: videoIds } });
 
-        return {
-            id: video.id,
-            description: video.description,
-            title: video.title,
-            watched,
-            liked,
-            likevalues: video.likes.filter(like => like.value === true).length,
-        };
-    });
+        // Query the Like collection to get the user's likes for these videos
+        const userLikes = await Like.find({ userId: activeUsername, videoId: { $in: videoIds } });
+
+        // Map over the videos and format the response
+        return videos.map(video => {
+            // Find the user's like for this video (if it exists)
+            const userLikeEntry = userLikes.find(like => like.videoId === video.id);
+            const liked = userLikeEntry ? (userLikeEntry.value === true ? true : false) : null;
+
+            // Check if the user has watched the video
+            const watched = video.views.some(view => view.userId === activeUsername);
+
+            // Calculate the number of likes for this video
+            const likeCount = userLikes.filter(like => like.videoId === video.id && like.value === true).length;
+
+            return {
+                id: video.id,
+                description: video.description,
+                title: video.title,
+                watched,
+                liked,
+                likevalues: likeCount,
+            };
+        });
+    } catch (e) {
+        console.error("Error formatting videos response: ", e);
+        throw e;
+    }
 }
 
 app.post('/api/videos', isAuthenticated, async (req, res) => {

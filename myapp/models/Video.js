@@ -23,18 +23,23 @@ const videoSchema = new Schema({
 		type: Date,
 		default: Date.now
 	},
-	likes: [
-		{
-			userId: {
-				type: String,
-				required: true
-			},
-			value: {
-				type: Boolean,
-				required: true,
-			}
-		}
-	],
+	// likes: [
+	// 	{
+	// 		userId: {
+	// 			type: String,
+	// 			required: true,
+	// 			index: true
+	// 		},
+	// 		value: {
+	// 			type: Boolean,
+	// 			required: true,
+	// 		}
+	// 	}
+	// ],
+	likesCount: {
+		type: Number,
+		default: 0
+	},
 	views: [
 		{
 			userId: {
