@@ -296,14 +296,13 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
 
         // Check if user already liked/disliked and update accordingly
         const userLike = video.likes && video.likes[0];
-        let currentLikes = video.likesCount;
         let incValue = 0;
 
         if (value === null) {
             // Remove like/dislike
             if (userLike) {
                 incValue = (userLike.value === true ? -1 : 0);
-                Video.updateOne(
+                await Video.updateOne(
                     { id },
                     {
                         $pull: { likes: { userId: username } },
@@ -322,7 +321,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
 
             if (userLike) {
                 // Update existing like/dislike
-                Video.updateOne(
+                await Video.updateOne(
                     { id, 'likes.userId': username },
                     {
                         $set: { 'likes.$.value': value },
@@ -331,7 +330,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
                 );
             } else {
                 // Add new like
-                Video.updateOne(
+                await Video.updateOne(
                     { id },
                     {
                         $push: { likes: { userId: username, value } },
@@ -342,7 +341,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
         }
 
         // Return the updated likes count
-        return res.status(200).json({ status: "OK", likes: currentLikes + incValue });
+        return res.status(200).json({ status: "OK", likes: video.likesCount });
 
     } catch (e) {
         console.error("Error liking/disliking: ", e);
