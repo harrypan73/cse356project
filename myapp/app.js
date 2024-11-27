@@ -291,6 +291,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
 
         // Fetch video and current likes
         const video = await Video.findOne({ id }, { likes: 1, likesCount: 1 });
+        console.log(video);
 
         if (!video) {
             return res.status(200).json({ status: "ERROR", error: true, message: "Video not found" });
@@ -298,6 +299,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
 
         // Find if the user already liked/disliked the video
         const userLike = video.likes.find(like => like.userId === username);
+        console.log("UserLike: ", userLike);
 
         let updateQuery = {};
         let incValue = 0;
@@ -322,6 +324,7 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
                 };
             } else {
                 // Add a new like/dislike
+                console.log("NEED TO ADD NEW LIKE/DISLIKE");
                 incValue = (value === true ? 1 : (value === false ? -1 : 0));
                 updateQuery = {
                     $push: { likes: { userId: username, value } }
@@ -329,15 +332,32 @@ app.post('/api/like', isAuthenticated, async (req, res) => {
             }
         }
 
+        console.log("UPDATE QUERY: ", updateQuery);
+
         // Update the video document if there's a change
         if (Object.keys(updateQuery).length > 0) {
-            const updatedVideo = await Video.updateOne(
-                { id, 'likes.userId': username },  // Match based on userId inside likes array
-                { 
-                    ...updateQuery, 
-                    $inc: { likesCount: incValue }  // Increment likesCount based on the action
-                }
-            );
+            console.log("UPDATING DOCUMENT");
+
+            let updatedVideo;
+            if (userLike) {
+                // If the user already liked/disliked, update the like/dislike
+                updatedVideo = await Video.updateOne(
+                    { id, 'likes.userId': username },  // Match based on video id and userId inside likes array
+                    { 
+                        ...updateQuery, 
+                        $inc: { likesCount: incValue }  // Increment or decrement likesCount based on the action
+                    }
+                );
+            } else {
+                // If the user hasn't liked/disliked yet, add a new like/dislike
+                updatedVideo = await Video.updateOne(
+                    { id },  // Match based on video id
+                    { 
+                        ...updateQuery, 
+                        $inc: { likesCount: incValue }  // Increment or decrement likesCount based on the action
+                    }
+                );
+            }
         }
 
         // Return the updated likes count
